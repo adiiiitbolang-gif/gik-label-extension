@@ -8,6 +8,8 @@ const $ = (id) => document.getElementById(id);
 const ua = navigator.userAgent;
 const inLark = /Lark|Feishu/i.test(ua) && Boolean(window.h5sdk || window.tt);
 const isMobile = /Android|iPhone|iPad/i.test(ua);
+// bitable:app covers the Base v1 record calls (search, batch_create, batch_get).
+const SCOPES = ["bitable:app"];
 const OUTLETS = ["Central Kitchen", "MM Blok M", "MM PP", "MM Kokas", "MM CP", "MM PIM", "Peppino", "Maiku", "Lain2"];
 
 const store = {
@@ -39,7 +41,7 @@ async function post(url, body) {
 
 function larkCode(appId) {
   return new Promise((resolve, reject) => {
-    const scopeList = ["base:record:read", "base:record:create", "base:field:read"];
+    const scopeList = SCOPES;
     const run = () => {
       const tt = window.tt;
       const fallback = () => tt.requestAuthCode({ appId, success: (r) => resolve(r.code), fail: (e) => reject(new Error(e?.errString || "sign-in refused")) });
@@ -74,13 +76,13 @@ async function doSignIn() {
     return saveSess(await post("/api/login", { code: q.get("code"), redirect_uri: back }));
   }
   const auth = new URL("https://accounts.larksuite.com/open-apis/authen/v1/authorize");
-  auth.search = new URLSearchParams({ client_id: appId, redirect_uri: back, state: "gik", scope: "base:record:read base:record:create base:field:read offline_access" });
+  auth.search = new URLSearchParams({ client_id: appId, redirect_uri: back, state: "gik", scope: `${SCOPES.join(" ")} offline_access` });
   location.href = auth.toString();
   await new Promise(() => {}); // leaving the page
 }
 
 // ---------- Base access ----------
-async function base(table, op, body, params = {}) {
+async function base(table, op, body, params = {}, retried = false) {
   if (!sess || Date.now() > sess.expires_at) await signIn();
   const qs = new URLSearchParams(params).toString();
   const r = await fetch(`/api/base/${table}/${op}${qs ? `?${qs}` : ""}`, {
@@ -89,10 +91,16 @@ async function base(table, op, body, params = {}) {
     body: op === "fields" ? undefined : JSON.stringify(body || {}),
   });
   const j = await r.json().catch(() => ({}));
-  if (r.status === 401 || j.code === 99991677 || j.code === 99991668) {
+  if ((r.status === 401 || j.code === 99991677 || j.code === 99991668) && !retried) {
     sess = { ...sess, expires_at: 0 };
     await signIn();
-    return base(table, op, body, params);
+    return base(table, op, body, params, true);
+  }
+  // Token from an older sign-in without the Base scope: sign in again so Lark asks for it.
+  if ((j.code === 99991679 || /re-authorization/i.test(j.msg || "")) && !retried) {
+    saveSess(null);
+    await signIn();
+    return base(table, op, body, params, true);
   }
   if (j.code !== 0) throw new Error(j.msg || `Base error ${j.code}`);
   return j.data;
