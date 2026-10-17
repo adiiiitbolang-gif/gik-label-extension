@@ -26,8 +26,13 @@ export function labelHtml(v, i, total) {
       <div class="l-exp">EXP ${esc(v.exp)}</div>
     </div>
     <div class="l-qr">${qrSvg(v.batch)}<div class="l-count">${i}/${total}</div></div>
-    <div class="l-foot">${v.net ? `Net <b>${esc(v.net)}</b> · ` : ""}<span class="l-store">${esc(v.storage)}</span>${v.allergens ? `<br>Allergen: ${esc(v.allergens)}` : ""}${v.dest ? `<br>To: ${esc(v.dest)}` : ""}</div>
+    <div class="l-foot">${v.net ? `Net <b>${esc(v.net)}</b> · ` : ""}<span class="l-store">${esc(v.storage)}</span>${v.allergens ? `<br>Allergen: ${esc(v.allergens)}` : ""}${v.dest ? `<div class="l-dest">→ ${esc(v.dest)}</div>` : ""}</div>
   </div>`;
+}
+
+// lines: [{ v, count }] — every label is numbered within its own line.
+export function multiSheetHtml(lines) {
+  return lines.map((l) => sheetHtml(l.v, l.count)).join("");
 }
 
 export function sheetHtml(v, count) {
@@ -48,6 +53,7 @@ export const LABEL_CSS = `
 .l-count{font-size:5pt;font-weight:700}
 .l-foot{font-size:5pt;line-height:1.15;align-self:end}
 .l-store{font-weight:700;text-transform:uppercase}
+.l-dest{font-weight:700;font-size:7pt;text-transform:uppercase;margin-top:.2mm}
 @page{size:50mm 30mm;margin:0}
 @media print{
   html,body{background:#fff!important;margin:0;padding:0}

@@ -1418,7 +1418,7 @@ Error generating stack: `+k.message+`
       <div class="l-exp">EXP ${Ao(e.exp)}</div>
     </div>
     <div class="l-qr">${tue(e.batch)}<div class="l-count">${t}/${n}</div></div>
-    <div class="l-foot">${e.net?`Net <b>${Ao(e.net)}</b> \xB7 `:""}<span class="l-store">${Ao(e.storage)}</span>${e.allergens?`<br>Allergen: ${Ao(e.allergens)}`:""}${e.dest?`<br>To: ${Ao(e.dest)}`:""}</div>
+    <div class="l-foot">${e.net?`Net <b>${Ao(e.net)}</b> \xB7 `:""}<span class="l-store">${Ao(e.storage)}</span>${e.allergens?`<br>Allergen: ${Ao(e.allergens)}`:""}${e.dest?`<div class="l-dest">\u2192 ${Ao(e.dest)}</div>`:""}</div>
   </div>`}function BF(e,t){let n=Math.max(1,Math.min(200,parseInt(t,10)||1)),r="";for(let o=1;o<=n;o++)r+=nue(e,o,n);return r}function LF(){document.getElementById("label-css").textContent=rue}var TF,rue,jF=Wi(()=>{TF=GI(RF());rue=`
 .label{width:50mm;height:30mm;background:#fff;color:#000;font-family:Arial,"Helvetica Neue",Helvetica,sans-serif;padding:1.4mm 1.6mm;display:grid;grid-template-columns:1fr 13mm;grid-template-rows:auto 1fr auto;column-gap:1.2mm;overflow:hidden}
 .l-name{grid-column:1/3;font-weight:700;font-size:8.2pt;line-height:1.05;max-height:2.15em;overflow:hidden;border-bottom:.3mm solid #000;padding-bottom:.6mm;margin-bottom:.6mm}
@@ -1430,6 +1430,7 @@ Error generating stack: `+k.message+`
 .l-count{font-size:5pt;font-weight:700}
 .l-foot{font-size:5pt;line-height:1.15;align-self:end}
 .l-store{font-weight:700;text-transform:uppercase}
+.l-dest{font-weight:700;font-size:7pt;text-transform:uppercase;margin-top:.2mm}
 @page{size:50mm 30mm;margin:0}
 @media print{
   html,body{background:#fff!important;margin:0;padding:0}
