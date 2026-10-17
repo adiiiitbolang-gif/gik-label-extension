@@ -1,0 +1,18 @@
+{
+  "name": "gik-label-extension",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@lark-base-open/js-sdk": "1.0.2",
+    "esbuild": "0.24.2",
+    "qrcode-generator": "1.4.4"
+  }
+}

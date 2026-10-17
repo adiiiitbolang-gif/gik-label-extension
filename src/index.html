@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GIK Production Label</title>
+<style>
+:root{--bg:#f6f7f5;--panel:#fff;--ink:#1f2a23;--muted:#66736a;--line:#d8dfd9;--accent:#3f7d4e;--font:"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif}
+@media (prefers-color-scheme: dark){:root{--bg:#1a1f1c;--panel:#222924;--ink:#e5ebe6;--muted:#9aa79e;--line:#34413a;--accent:#7cc08d;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 var(--font)}
+.ui{padding:12px;display:grid;gap:10px}
+h1{font-size:14px;margin:0}
+.muted{color:var(--muted);font-size:12px}
+select,input{width:100%;font:13px var(--font);padding:7px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink)}
+label{display:grid;gap:4px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+button{flex:1 1 120px;font:600 13px var(--font);border-radius:6px;padding:9px 10px;cursor:pointer;border:1px solid var(--accent)}
+.primary{background:var(--accent);color:#fff}
+.secondary{background:transparent;color:var(--accent)}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+#picked{font-weight:600}
+#status{background:#fff4e0;color:#7a4b00;border-radius:6px;padding:7px 9px;font-size:12px}
+.sheet{display:flex;flex-wrap:wrap;gap:10px;padding:0 12px 16px}
+.sheet .label{box-shadow:0 0 0 1px var(--line)}
+</style>
+<style id="label-css">
+.label{width:50mm;height:30mm;background:#fff;color:#000;font-family:Arial,"Helvetica Neue",Helvetica,sans-serif;padding:1.4mm 1.6mm;display:grid;grid-template-columns:1fr 13mm;grid-template-rows:auto 1fr auto;column-gap:1.2mm;overflow:hidden}
+.l-name{grid-column:1/3;font-weight:700;font-size:8.2pt;line-height:1.05;max-height:2.15em;overflow:hidden;border-bottom:.3mm solid #000;padding-bottom:.6mm;margin-bottom:.6mm}
+.l-body{font-size:5.6pt;line-height:1.22;display:grid;align-content:start}
+.l-exp{font-size:7.4pt;font-weight:700;margin-top:.3mm}
+.l-qr{grid-row:2/4;grid-column:2;align-self:end;display:grid;justify-items:center;gap:.2mm}
+.l-qr svg{width:13mm;height:13mm;display:block}
+.l-count{font-size:5pt;font-weight:700}
+.l-foot{font-size:5pt;line-height:1.15;align-self:end}
+.l-store{font-weight:700;text-transform:uppercase}
+@page{size:50mm 30mm;margin:0}
+@media print{
+  html,body{background:#fff!important;margin:0;padding:0}
+  .ui{display:none!important}
+  .sheet{display:block;padding:0}
+  .sheet .label{box-shadow:none;page-break-after:always;break-after:page}
+  .sheet .label:last-child{page-break-after:auto;break-after:auto}
+}
+</style>
+</head>
+<body>
+<div class="ui">
+  <div>
+    <h1>Production Label · 50 × 30 mm</h1>
+    <div class="muted">Click a row in Production Batches, or choose a batch below.</div>
+  </div>
+  <label for="batchSelect">Batch<select id="batchSelect"><option value="">Loading batches…</option></select></label>
+  <div id="picked" class="muted"></div>
+  <label for="copies">Labels to print<input id="copies" type="number" min="1" max="200" value="1"></label>
+  <div class="row">
+    <button type="button" id="printBtn" class="primary">Print labels</button>
+    <button type="button" id="windowBtn" class="secondary">Open print window</button>
+  </div>
+  <div id="status" hidden></div>
+  <a id="fallbackLink" target="_blank" rel="noopener" hidden>Open print page</a>
+  <div class="muted">Printer: paper 50 × 30 mm, margins none, scale 100%, headers/footers off.</div>
+</div>
+<div class="sheet" id="sheet" aria-label="Label preview"></div>
+<script src="./app.js"></script>
+</body>
+</html>
