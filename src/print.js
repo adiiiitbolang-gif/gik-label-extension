@@ -1,4 +1,5 @@
 import { sheetHtml, multiSheetHtml, injectLabelCss, esc } from "./labels.js";
+import { drawLabel, canvasToFile } from "./labelImage.js";
 
 // Standalone print page, opened from Lark (desktop button or phone message card).
 // Two modes:
@@ -81,3 +82,56 @@ if (inLarkApp) {
 render();
 // One-tap links: open the print dialog right away (not inside Lark's in-app browser, which can't print).
 if (hasData && qs.get("autoprint") === "1" && !inLarkApp) setTimeout(() => { try { window.print(); } catch { $("inapp").hidden = false; } }, 400);
+
+// Every label as { v, i, total }, in print order.
+function labelList() {
+  if (!hasData) return [];
+  const groups = lines ? lines : [{ v: single, count: $("copies").value, lastNet: "" }];
+  const out = [];
+  for (const g of groups) {
+    const n = Math.max(1, Math.min(200, parseInt(g.count, 10) || 1));
+    for (let i = 1; i <= n; i++) out.push({ v: i === n && g.lastNet ? { ...g.v, net: g.lastNet } : g.v, i, total: n });
+  }
+  return out;
+}
+
+async function labelFiles() {
+  const list = labelList();
+  return Promise.all(list.map((l, k) => canvasToFile(drawLabel(l.v, l.i, l.total), `label-${String(k + 1).padStart(2, "0")}-${(l.v.code || "item").replace(/[^\w-]/g, "")}.png`)));
+}
+
+function note(msg) {
+  $("shareNote").textContent = msg;
+  $("shareNote").hidden = !msg;
+}
+
+// Share sheet: the thermal printer's own app (Labelife, NIIMBOT, iPrint, ...) appears as a target on Android/iOS.
+$("shareBtn").addEventListener("click", async () => {
+  note("");
+  const files = await labelFiles();
+  if (!files.length) return;
+  if (navigator.canShare && navigator.canShare({ files })) {
+    try {
+      await navigator.share({ files, title: "Labels" });
+    } catch (e) {
+      if (e && e.name !== "AbortError") note("Sharing failed. Use Save label images instead, then open them in your printer app.");
+    }
+  } else {
+    note(inLarkApp ? 'Sharing is not available inside Lark. Tap "Open in Chrome to print" first.' : "This browser can't share files. Use Save label images, then open them in your printer app.");
+  }
+});
+
+$("saveBtn").addEventListener("click", async () => {
+  const files = await labelFiles();
+  const box = $("saveList");
+  box.innerHTML = "";
+  files.forEach((f) => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(f);
+    a.download = f.name;
+    a.textContent = f.name;
+    box.appendChild(a);
+    a.click();
+  });
+  box.hidden = !files.length;
+});
