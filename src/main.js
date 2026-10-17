@@ -1,5 +1,5 @@
 import { bitable } from "@lark-base-open/js-sdk";
-import qrcode from "qrcode-generator";
+import { esc, sheetHtml, injectLabelCss } from "./labels.js";
 
 // Production Batches fields shown on the 50 x 30 mm label.
 const TABLE_NAME = "Production Batches";
@@ -9,6 +9,7 @@ const F = {
   code: "Product Code",
   prod: "Prod Date (label)",
   exp: "Expiry (label)",
+  run: "Label Batch Line",
   net: "Label Net",
   count: "Containers (labels)",
   storage: "Storage",
@@ -21,34 +22,6 @@ let table = null;
 let fieldIds = {};
 let current = null;
 
-function esc(t) {
-  return String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-}
-
-function qrSvg(text) {
-  const qr = qrcode(0, "M");
-  qr.addData(text || "-");
-  qr.make();
-  const n = qr.getModuleCount();
-  let path = "";
-  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) path += `M${c + 1} ${r + 1}h1v1h-1z`;
-  return `<svg viewBox="0 0 ${n + 2} ${n + 2}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${path}" fill="#000"/></svg>`;
-}
-
-function labelHtml(v, i, total) {
-  return `<div class="label">
-    <div class="l-name">${esc(v.name)}</div>
-    <div class="l-body">
-      <div><b>${esc(v.code)}</b></div>
-      <div>Batch <b>${esc(v.batch)}</b></div>
-      <div>Prod ${esc(v.prod)}</div>
-      <div class="l-exp">EXP ${esc(v.exp)}</div>
-    </div>
-    <div class="l-qr">${qrSvg(v.batch)}<div class="l-count">${i}/${total}</div></div>
-    <div class="l-foot">${v.net ? `Net <b>${esc(v.net)}</b> · ` : ""}<span class="l-store">${esc(v.storage)}</span>${v.allergens ? `<br>Allergen: ${esc(v.allergens)}` : ""}${v.dest ? `<br>To: ${esc(v.dest)}` : ""}</div>
-  </div>`;
-}
-
 function copies() {
   return Math.max(1, Math.min(200, parseInt($("copies").value, 10) || 1));
 }
@@ -58,10 +31,7 @@ function render() {
     $("sheet").innerHTML = "";
     return;
   }
-  const n = copies();
-  let html = "";
-  for (let i = 1; i <= n; i++) html += labelHtml(current, i, n);
-  $("sheet").innerHTML = html;
+  $("sheet").innerHTML = sheetHtml(current, copies());
 }
 
 async function loadRecord(recordId) {
@@ -130,6 +100,7 @@ function printInWindow() {
 }
 
 async function init() {
+  injectLabelCss();
   $("copies").addEventListener("input", render);
   $("printBtn").addEventListener("click", printInPlace);
   $("windowBtn").addEventListener("click", printInWindow);
