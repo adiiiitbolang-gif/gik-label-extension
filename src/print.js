@@ -36,8 +36,18 @@ $("printBtn").addEventListener("click", () => {
     $("inapp").hidden = false;
   }
 });
-// Lark's in-app browser on phones may not support printing; show how to open in the system browser.
-if (/Lark|Feishu/i.test(navigator.userAgent) && /Android|iPhone|iPad/i.test(navigator.userAgent)) $("inapp").hidden = false;
+// Lark's in-app browser on phones can't print; offer to reopen the page in the phone's own browser.
+const ua = navigator.userAgent;
+const inLarkApp = /Lark|Feishu/i.test(ua) && /Android|iPhone|iPad/i.test(ua);
+if (inLarkApp) {
+  $("inapp").hidden = false;
+  if (/Android/i.test(ua)) {
+    const href = location.href;
+    const intent = `intent://${href.replace(/^https?:\/\//, "")}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(href)};end`;
+    $("chromeBtn").href = intent;
+    $("chromeBtn").hidden = false;
+  }
+}
 render();
 // "Print 1 label" link: open the print dialog right away.
-if (v.batch && qs.get("autoprint") === "1") setTimeout(() => { try { window.print(); } catch { $("inapp").hidden = false; } }, 400);
+if (v.batch && qs.get("autoprint") === "1" && !inLarkApp) setTimeout(() => { try { window.print(); } catch { $("inapp").hidden = false; } }, 400);
