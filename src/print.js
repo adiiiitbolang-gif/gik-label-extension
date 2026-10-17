@@ -1,4 +1,4 @@
-import { sheetHtml, multiSheetHtml, injectLabelCss, esc } from "./labels.js";
+import { sheetHtml, multiSheetHtml, injectLabelCss, esc, parseLabelData } from "./labels.js";
 import { drawLabel, canvasToFile } from "./labelImage.js";
 
 // Standalone print page, opened from Lark (desktop button or phone message card).
@@ -8,24 +8,11 @@ import { drawLabel, canvasToFile } from "./labelImage.js";
 //                                                         q = net per container, last = net of the last container)
 const $ = (id) => document.getElementById(id);
 const qs = new URLSearchParams(location.search);
-const KEYS = ["name", "code", "batch", "prod", "exp", "run", "net", "storage", "allergens", "dest"];
 
 // Read L from the raw query string: the "|" and "^" separators must not be decoded before splitting.
 function packingLines() {
   const raw = location.search.slice(1).split("&").find((p) => p.startsWith("L="));
-  if (!raw) return null;
-  return raw
-    .slice(2)
-    .split(/\^|%5E/i)
-    .filter(Boolean)
-    .map((line) => {
-      const parts = line.split(/\||%7C/i).map((x) => {
-        try { return decodeURIComponent(x); } catch { return x; }
-      });
-      const v = {};
-      KEYS.forEach((k, i) => (v[k] = parts[i] || ""));
-      return { v, count: parseInt(parts[10], 10) || 1, lastNet: parts[11] || "" };
-    });
+  return raw ? parseLabelData(raw.slice(2)) : null;
 }
 
 const lines = packingLines();

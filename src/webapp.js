@@ -1,0 +1,550 @@
+import { esc, encodeLine, parseLabelData, sheetHtml, injectLabelCss } from "./labels.js";
+import { drawLabel, canvasToFile } from "./labelImage.js";
+
+// GIK Production web app: opened from Lark Workplace (phone/tablet) or a browser.
+// Writes go straight to the Production base with the signed-in user's own token (through the Worker),
+// so no Base automation runs are used: labels are built and printed right here.
+const $ = (id) => document.getElementById(id);
+const ua = navigator.userAgent;
+const inLark = /Lark|Feishu/i.test(ua) && Boolean(window.h5sdk || window.tt);
+const isMobile = /Android|iPhone|iPad/i.test(ua);
+const OUTLETS = ["Central Kitchen", "MM Blok M", "MM PP", "MM Kokas", "MM CP", "MM PIM", "Peppino", "Maiku", "Lain2"];
+
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage off: drafts just aren't kept */ } },
+};
+
+// ---------- sign-in ----------
+let sess = (() => { try { return JSON.parse(sessionStorage.getItem("gik.session") || "null"); } catch { return null; } })();
+function saveSess(s) {
+  sess = s;
+  try { sessionStorage.setItem("gik.session", JSON.stringify(s)); } catch { /* fine */ }
+  $("who").textContent = s?.name || "";
+}
+
+function status(msg, kind = "note") {
+  const el = $("status");
+  el.className = kind;
+  el.innerHTML = msg || "";
+  el.hidden = !msg;
+}
+
+async function post(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.msg || `HTTP ${r.status}`);
+  return j;
+}
+
+function larkCode(appId) {
+  return new Promise((resolve, reject) => {
+    const scopeList = ["base:record:read", "base:record:create", "base:field:read"];
+    const run = () => {
+      const tt = window.tt;
+      const fallback = () => tt.requestAuthCode({ appId, success: (r) => resolve(r.code), fail: (e) => reject(new Error(e?.errString || "sign-in refused")) });
+      if (tt?.requestAccess) {
+        tt.requestAccess({ appID: appId, scopeList, state: "gik", success: (r) => resolve(r.code), fail: (e) => (e?.errno === 103 ? fallback() : reject(new Error(e?.errString || "sign-in refused"))) });
+      } else if (tt?.requestAuthCode) fallback();
+      else reject(new Error("Lark sign-in is not available here"));
+    };
+    if (window.h5sdk?.ready) window.h5sdk.ready(run);
+    else run();
+  });
+}
+
+let signing = null;
+function signIn() {
+  if (!signing) signing = doSignIn().finally(() => (signing = null));
+  return signing;
+}
+
+async function doSignIn() {
+  if (sess?.token && Date.now() < sess.expires_at) return saveSess(sess);
+  if (sess?.refresh_token) {
+    try { return saveSess(await post("/api/refresh", sess)); } catch { /* fall through to a new sign-in */ }
+  }
+  const { appId } = await fetch("/api/config").then((r) => r.json());
+  if (inLark) return saveSess(await post("/api/login", { code: await larkCode(appId) }));
+  // Plain browser: Lark OAuth redirect.
+  const back = location.origin + location.pathname;
+  const q = new URLSearchParams(location.search);
+  if (q.get("code") && q.get("state") === "gik") {
+    history.replaceState(null, "", back);
+    return saveSess(await post("/api/login", { code: q.get("code"), redirect_uri: back }));
+  }
+  const auth = new URL("https://accounts.larksuite.com/open-apis/authen/v1/authorize");
+  auth.search = new URLSearchParams({ client_id: appId, redirect_uri: back, state: "gik", scope: "base:record:read base:record:create base:field:read offline_access" });
+  location.href = auth.toString();
+  await new Promise(() => {}); // leaving the page
+}
+
+// ---------- Base access ----------
+async function base(table, op, body, params = {}) {
+  if (!sess || Date.now() > sess.expires_at) await signIn();
+  const qs = new URLSearchParams(params).toString();
+  const r = await fetch(`/api/base/${table}/${op}${qs ? `?${qs}` : ""}`, {
+    method: op === "fields" ? "GET" : "POST",
+    headers: { "content-type": "application/json", "x-lark-token": sess.token },
+    body: op === "fields" ? undefined : JSON.stringify(body || {}),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 || j.code === 99991677 || j.code === 99991668) {
+    sess = { ...sess, expires_at: 0 };
+    await signIn();
+    return base(table, op, body, params);
+  }
+  if (j.code !== 0) throw new Error(j.msg || `Base error ${j.code}`);
+  return j.data;
+}
+
+async function searchAll(table, body) {
+  const out = [];
+  let page_token = "";
+  do {
+    const d = await base(table, "search", body, { page_size: 500, ...(page_token ? { page_token } : {}) });
+    out.push(...(d.items || []));
+    page_token = d.has_more ? d.page_token : "";
+  } while (page_token);
+  return out;
+}
+
+// Cell values come back as text runs, option names, link objects or plain numbers.
+function txt(x) {
+  if (x == null) return "";
+  if (Array.isArray(x)) return x.map(txt).join("");
+  if (typeof x === "object") {
+    if ("text" in x) return String(x.text ?? "");
+    if ("value" in x) return txt(x.value);
+    if ("name" in x) return String(x.name ?? "");
+    return "";
+  }
+  return String(x);
+}
+const num = (x) => parseFloat(txt(x)) || 0;
+const fmt = (n) => (Math.round(n * 100) / 100).toLocaleString("en-US");
+
+// ---------- tabs ----------
+let tab = store.get("gik.tab", "prod");
+function show(t) {
+  tab = t;
+  store.set("gik.tab", t);
+  document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
+  document.querySelectorAll("[data-view]").forEach((s) => (s.hidden = s.dataset.view !== t));
+  $("bar").hidden = t === "labels";
+  if (t === "labels") loadRecent();
+  updateBar();
+}
+document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => show(b.dataset.tab)));
+
+// ---------- production ----------
+let recipes = [];
+let draft = store.get("gik.prod", {}); // recipeId -> { b, q, c, p }
+let filledOnly = false;
+
+async function loadRecipes() {
+  const items = await searchAll("recipes", {
+    field_names: ["Recipe Name", "Output Code", "Product Name", "Output Unit", "Yield Qty", "Active"],
+    automatic_fields: false,
+  });
+  recipes = items
+    .map((r) => ({ id: r.record_id, name: txt(r.fields["Recipe Name"]), code: txt(r.fields["Output Code"]), product: txt(r.fields["Product Name"]), unit: txt(r.fields["Output Unit"]), yieldQty: num(r.fields["Yield Qty"]), active: r.fields.Active === true }))
+    .filter((r) => r.active && r.name)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  renderRecipes();
+}
+
+function prodRows() {
+  return recipes.filter((r) => { const d = draft[r.id]; return d && num(d.q) > 0 && num(d.b) > 0; });
+}
+
+function yieldText(r, d) {
+  const b = num(d?.b);
+  const q = num(d?.q);
+  if (!q && !b) return { t: "", warn: false };
+  if (q && !b) return { t: "batches?", warn: true };
+  if (b && !q) return { t: "output?", warn: true };
+  if (!r.yieldQty) return { t: "", warn: false };
+  const pct = Math.round((q / (b * r.yieldQty)) * 100);
+  return { t: `${pct}%`, warn: pct < 70 || pct > 130 };
+}
+
+function renderRecipes() {
+  const q = $("psearch").value.trim().toLowerCase();
+  const list = recipes.filter((r) => (!q || `${r.name} ${r.code} ${r.product}`.toLowerCase().includes(q)) && (!filledOnly || draft[r.id]));
+  $("plist").innerHTML = list.length
+    ? list.map((r) => {
+        const d = draft[r.id] || {};
+        const y = yieldText(r, d);
+        const filled = num(d.q) > 0 && num(d.b) > 0;
+        return `<div class="prow${filled ? " filled" : ""}" data-id="${r.id}">
+          <div class="pinfo"><div class="pname">${esc(r.name)}</div><div class="psub">${esc(r.code)} · 1 batch = ${fmt(r.yieldQty)} ${esc(r.unit)}</div></div>
+          <label><span class="lbl-m">Std batches</span><input class="num" data-k="b" inputmode="decimal" enterkeyhint="next" value="${esc(d.b ?? "")}" aria-label="Std batches ${esc(r.name)}"></label>
+          <label class="unit"><span class="lbl-m">Output</span><input class="num" data-k="q" inputmode="decimal" enterkeyhint="next" value="${esc(d.q ?? "")}" aria-label="Output ${esc(r.unit)} ${esc(r.name)}"><span>${esc(r.unit)}</span></label>
+          <label><span class="lbl-m">Containers</span><input class="num" data-k="c" inputmode="numeric" enterkeyhint="next" value="${esc(d.c ?? "")}" aria-label="Containers ${esc(r.name)}"></label>
+          <label class="cprint"><span class="lbl-m">Print</span><input type="checkbox" class="chk" data-k="p" ${d.p ? "checked" : ""} aria-label="Print labels ${esc(r.name)}"></label>
+          <div class="yield${y.warn ? " warn" : ""}" data-y>${y.t}</div>
+        </div>`;
+      }).join("")
+    : `<p class="muted">${recipes.length ? "No recipe matches." : "Loading recipes…"}</p>`;
+  updateBar();
+}
+
+$("plist").addEventListener("input", (e) => {
+  const row = e.target.closest(".prow");
+  if (!row) return;
+  const id = row.dataset.id;
+  const d = { ...(draft[id] || {}) };
+  const k = e.target.dataset.k;
+  d[k] = k === "p" ? e.target.checked : e.target.value.replace(",", ".");
+  if (!d.b && !d.q && !d.c && !d.p) delete draft[id];
+  else draft[id] = d;
+  store.set("gik.prod", draft);
+  const r = recipes.find((x) => x.id === id);
+  const y = yieldText(r, d);
+  const yEl = row.querySelector("[data-y]");
+  yEl.textContent = y.t;
+  yEl.classList.toggle("warn", y.warn);
+  row.classList.toggle("filled", num(d.q) > 0 && num(d.b) > 0);
+  updateBar();
+});
+// Enter jumps to the next input, like moving down a sheet.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || !e.target.classList?.contains("num")) return;
+  const all = [...document.querySelectorAll("main section:not([hidden]) input.num")];
+  const next = all[all.indexOf(e.target) + 1];
+  if (next) { e.preventDefault(); next.focus(); next.select?.(); }
+});
+$("psearch").addEventListener("input", renderRecipes);
+$("pfilled").addEventListener("click", () => { filledOnly = !filledOnly; $("pfilled").setAttribute("aria-pressed", String(filledOnly)); renderRecipes(); });
+$("pclear").addEventListener("click", () => { if (Object.keys(draft).length && confirm("Clear every number on the sheet?")) { draft = {}; store.set("gik.prod", draft); renderRecipes(); } });
+
+function lotFor(code) {
+  const d = new Date();
+  return `${code}-${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function batchLine(rec) {
+  const f = rec.fields;
+  const containers = num(f["Containers (labels)"]);
+  const v = {
+    name: txt(f["Product Name"]),
+    code: txt(f["Product Code"]),
+    batch: txt(f["Lot Code"]) || txt(f["Batch No"]),
+    prod: txt(f["Prod Date (label)"]),
+    exp: txt(f["Expiry (label)"]),
+    run: txt(f["Label Batch Line"]),
+    net: txt(f["Label Net"]) || `${fmt(num(f["Actual Output Qty"]))} ${txt(f.Unit)}`,
+    storage: txt(f.Storage),
+    allergens: txt(f.Allergens),
+    dest: "",
+  };
+  return encodeLine(v, containers || 1);
+}
+
+async function submitProduction() {
+  const rows = prodRows();
+  const now = Date.now();
+  const created = await base("batches", "create", {
+    records: rows.map((r) => {
+      const d = draft[r.id];
+      const fields = { Recipe: [r.id], "Actual Output Qty": num(d.q), "Recipe Runs (batch)": num(d.b), "Lot Code": lotFor(r.code), Status: "Done", "Production Date": now, "Print labels?": "No" };
+      if (num(d.c) > 0) fields["Containers (labels)"] = Math.round(num(d.c));
+      return { fields };
+    }),
+  });
+  const ids = created.records.map((x) => x.record_id);
+  const printIds = ids.filter((_, i) => draft[rows[i].id].p);
+  for (const r of rows) delete draft[r.id];
+  store.set("gik.prod", draft);
+  renderRecipes();
+  status(`✅ Saved ${ids.length} production batch(es).`, "ok");
+  if (printIds.length) {
+    const recs = await getRecords("batches", printIds);
+    openLabels(recs.map(batchLine).join("^"), `Production · ${printIds.length} product(s)`);
+  }
+}
+
+async function getRecords(table, ids) {
+  const d = await base(table, "get", { record_ids: ids, automatic_fields: false });
+  const byId = Object.fromEntries((d.records || []).map((r) => [r.record_id, r]));
+  return ids.map((id) => byId[id]).filter(Boolean);
+}
+
+// ---------- packing ----------
+let items = [];
+let batches = []; // recent production batches, for the optional batch pick
+let outlet = store.get("gik.outlet", "");
+let krows = store.get("gik.pack", [{}]);
+
+async function loadItems() {
+  const list = await searchAll("items", { field_names: ["Item", "Code", "Product Name", "Unit"], automatic_fields: false });
+  items = list.map((r) => ({ id: r.record_id, code: txt(r.fields.Code), name: txt(r.fields["Product Name"]), unit: txt(r.fields.Unit) })).filter((i) => i.code);
+  renderPacking();
+}
+
+async function loadBatches() {
+  const list = await searchAll("batches", {
+    field_names: ["Batch No", "Lot Code", "Product Name", "Product Code", "Prod Date (label)", "Expiry (label)", "Label Batch Line", "Label Net", "Actual Output Qty", "Unit", "Storage", "Allergens", "Containers (labels)", "Production Date"],
+    sort: [{ field_name: "Production Date", desc: true }],
+    automatic_fields: false,
+  });
+  batches = list.slice(0, 300);
+}
+
+function renderOutlets() {
+  $("outlets").innerHTML = OUTLETS.map((o) => `<button class="chip" data-o="${esc(o)}" aria-pressed="${o === outlet}">${esc(o)}</button>`).join("");
+  $("cknote").hidden = outlet !== "Central Kitchen";
+}
+$("outlets").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-o]");
+  if (!b) return;
+  outlet = b.dataset.o;
+  store.set("gik.outlet", outlet);
+  renderOutlets();
+  updateBar();
+});
+
+function rowCalc(r) {
+  const split = num(r.split);
+  const qty = num(r.qty);
+  const labels = num(r.labels);
+  const count = split > 0 ? (labels > 0 ? labels : qty > 0 ? Math.ceil(qty / split) : 1) : labels > 0 ? labels : 1;
+  const total = split > 0 && labels > 0 ? split * labels : qty;
+  return { count, total, net: split > 0 ? split : total };
+}
+
+function rowInfo(r) {
+  const it = items.find((i) => i.id === r.item);
+  if (!it) return "Pick a product";
+  const c = rowCalc(r);
+  if (!c.total) return "Enter Qty, or Split × Labels";
+  return `${c.count} label(s) × ${fmt(c.net)} ${esc(it.unit)} · total ${fmt(c.total)} ${esc(it.unit)}`;
+}
+
+function renderPacking() {
+  renderOutlets();
+  $("krows").innerHTML = krows.map((r, i) => {
+    const it = items.find((x) => x.id === r.item);
+    const mine = it ? batches.filter((b) => txt(b.fields["Product Code"]) === it.code).slice(0, 10) : [];
+    return `<div class="krow" data-i="${i}">
+      <label class="field pick"><span>Product</span><input class="num" style="text-align:left" data-k="find" placeholder="Search code or name" autocomplete="off" value="${esc(it ? `${it.code} · ${it.name}` : r.find || "")}"><div class="menu" hidden></div></label>
+      <label class="field"><span>Split</span><input class="num" data-k="split" inputmode="decimal" value="${esc(r.split ?? "")}"></label>
+      <label class="field"><span>Labels</span><input class="num" data-k="labels" inputmode="numeric" value="${esc(r.labels ?? "")}"></label>
+      <label class="field"><span>Qty</span><input class="num" data-k="qty" inputmode="decimal" value="${esc(r.qty ?? "")}"></label>
+      <label class="field kbatch"><span>Batch</span><select class="num" data-k="batch"><option value="">Latest (auto)</option>${mine.map((b) => `<option value="${b.record_id}" ${b.record_id === r.batch ? "selected" : ""}>${esc(txt(b.fields["Lot Code"]) || txt(b.fields["Batch No"]))} · ${esc(txt(b.fields["Prod Date (label)"]).slice(0, 5))}</option>`).join("")}</select></label>
+      <button class="x" data-del aria-label="Remove row">×</button>
+      <div class="rowinfo">${rowInfo(r)}</div>
+    </div>`;
+  }).join("");
+  updateBar();
+}
+
+function saveRows() { store.set("gik.pack", krows); }
+
+$("krows").addEventListener("input", (e) => {
+  const row = e.target.closest(".krow");
+  if (!row) return;
+  const i = +row.dataset.i;
+  const k = e.target.dataset.k;
+  if (k === "find") {
+    krows[i] = { ...krows[i], find: e.target.value, item: "" };
+    const q = e.target.value.trim().toLowerCase();
+    const menu = row.querySelector(".menu");
+    const hits = q ? items.filter((it) => `${it.code} ${it.name}`.toLowerCase().includes(q)).slice(0, 8) : [];
+    menu.innerHTML = hits.map((it) => `<button type="button" data-item="${it.id}"><b>${esc(it.code)}</b> · ${esc(it.name)}</button>`).join("");
+    menu.hidden = !hits.length;
+  } else {
+    krows[i] = { ...krows[i], [k]: e.target.value.replace(",", ".") };
+    row.querySelector(".rowinfo").innerHTML = rowInfo(krows[i]);
+  }
+  saveRows();
+  updateBar();
+});
+$("krows").addEventListener("click", (e) => {
+  const row = e.target.closest(".krow");
+  if (!row) return;
+  const i = +row.dataset.i;
+  const pick = e.target.closest("[data-item]");
+  if (pick) {
+    krows[i] = { ...krows[i], item: pick.dataset.item, find: "", batch: "" };
+    saveRows();
+    renderPacking();
+    row.parentElement.querySelector(`.krow[data-i="${i}"] [data-k="split"]`)?.focus();
+  } else if (e.target.closest("[data-del]")) {
+    krows.splice(i, 1);
+    if (!krows.length) krows.push({});
+    saveRows();
+    renderPacking();
+  }
+});
+$("kadd").addEventListener("click", () => { krows.push({}); saveRows(); renderPacking(); $("krows").querySelector(".krow:last-child [data-k=find]")?.focus(); });
+
+function packRows() { return krows.filter((r) => r.item && rowCalc(r).total > 0); }
+
+async function submitPacking() {
+  const rows = packRows();
+  const now = Date.now();
+  const created = await base("packing", "create", {
+    records: rows.map((r) => {
+      const fields = { Item: [r.item], Outlet: outlet, "Packing Date": now, "Print labels?": "No" };
+      if (num(r.split) > 0) fields.Split = num(r.split);
+      if (num(r.labels) > 0) fields.Labels = Math.round(num(r.labels));
+      if (num(r.qty) > 0) fields.Qty = num(r.qty);
+      if (r.batch) fields["Batch (optional)"] = [r.batch];
+      return { fields };
+    }),
+  });
+  const ids = created.records.map((x) => x.record_id);
+  krows = [{}];
+  saveRows();
+  renderPacking();
+  status(`✅ Packed ${ids.length} product(s) for ${esc(outlet)}.`, "ok");
+  if ($("kprint").checked) {
+    const recs = await getRecords("packing", ids);
+    openLabels(recs.map((r) => txt(r.fields["Label Line"])).filter(Boolean).join("^"), `Packing → ${outlet}`);
+  }
+}
+
+// ---------- bottom bar + confirm ----------
+function updateBar() {
+  if (tab === "prod") {
+    const rows = prodRows();
+    const missing = recipes.filter((r) => { const d = draft[r.id]; return d && (num(d.q) > 0) !== (num(d.b) > 0); }).length;
+    $("sum").innerHTML = `<b>${rows.length}</b> product(s) ready${missing ? ` · <span class="danger">${missing} need both batches and output</span>` : ""}`;
+    $("submit").textContent = "Submit production";
+    $("submit").disabled = !rows.length || missing > 0;
+  } else if (tab === "pack") {
+    const rows = packRows();
+    const labels = rows.reduce((t, r) => t + rowCalc(r).count, 0);
+    $("sum").innerHTML = outlet ? `<b>${rows.length}</b> product(s) · ${labels} label(s) → <b>${esc(outlet)}</b>` : `<span class="danger">Pick an outlet</span>`;
+    $("submit").textContent = "Submit packing";
+    $("submit").disabled = !rows.length || !outlet;
+  }
+}
+
+$("submit").addEventListener("click", () => {
+  const lines = tab === "prod"
+    ? prodRows().map((r) => { const d = draft[r.id]; return `${esc(r.name)}: ${fmt(num(d.b))} batch → ${fmt(num(d.q))} ${esc(r.unit)}${d.p ? ` · 🖨 ${num(d.c) || 1}` : ""}`; })
+    : packRows().map((r) => { const it = items.find((x) => x.id === r.item); const c = rowCalc(r); return `${esc(it.name)}: ${c.count} × ${fmt(c.net)} ${esc(it.unit)}`; });
+  $("ctitle").textContent = tab === "prod" ? "Submit production?" : `Submit packing → ${outlet}?`;
+  $("clist").innerHTML = lines.map((l) => `<li>${l}</li>`).join("");
+  $("confirm").showModal();
+});
+$("cno").addEventListener("click", () => $("confirm").close());
+$("cyes").addEventListener("click", async () => {
+  $("confirm").close();
+  $("submit").disabled = true;
+  status("Saving…");
+  try {
+    if (tab === "prod") await submitProduction();
+    else await submitPacking();
+  } catch (e) {
+    status(`Could not save: ${esc(e.message)}. Nothing was lost, try again.`);
+  }
+  updateBar();
+});
+
+// ---------- labels ----------
+let labelData = "";
+
+function labelList(data) {
+  const out = [];
+  for (const g of parseLabelData(data)) {
+    const n = Math.max(1, Math.min(200, g.count));
+    for (let i = 1; i <= n; i++) out.push({ v: i === n && g.lastNet ? { ...g.v, net: g.lastNet } : g.v, i, total: n });
+  }
+  return out;
+}
+
+function openLabels(data, title) {
+  labelData = data;
+  const list = labelList(data);
+  $("lbltitle").textContent = `${title} · ${list.length} label(s)`;
+  $("previews").innerHTML = "";
+  list.slice(0, 40).forEach((l) => $("previews").appendChild(drawLabel(l.v, l.i, l.total)));
+  $("lblnote").hidden = true;
+  $("lblset").hidden = !list.length;
+  $("printsheet").innerHTML = parseLabelData(data).map((g) => sheetHtml(g.v, g.count, g.lastNet)).join("");
+  $("printnow").hidden = inLark && isMobile; // Lark's phone webview has no print dialog
+  show("labels");
+  window.scrollTo(0, 0);
+}
+
+function lblNote(msg) { $("lblnote").innerHTML = msg; $("lblnote").hidden = !msg; }
+
+$("share").addEventListener("click", async () => {
+  lblNote("");
+  const list = labelList(labelData);
+  const files = await Promise.all(list.map((l, k) => canvasToFile(drawLabel(l.v, l.i, l.total), `label-${String(k + 1).padStart(2, "0")}.png`)));
+  if (navigator.canShare && navigator.canShare({ files })) {
+    try { await navigator.share({ files, title: "Labels" }); } catch (e) { if (e?.name !== "AbortError") lblNote("Sharing failed here. Tap <b>Open in browser to print</b>."); }
+  } else {
+    lblNote("This screen can't share images to other apps. Tap <b>Open in browser to print</b>, then <b>Send to printer app</b> there.");
+  }
+});
+
+let jsReady = null;
+function larkJsConfig() {
+  if (!jsReady) {
+    jsReady = (async () => {
+      const page = location.href.split("#")[0];
+      const c = await fetch(`/api/jsconfig?url=${encodeURIComponent(page)}`).then((r) => r.json());
+      await new Promise((resolve, reject) => window.h5sdk.config({ ...c, jsApiList: ["openSchema"], onSuccess: resolve, onFail: reject }));
+    })().catch((e) => { jsReady = null; throw e; });
+  }
+  return jsReady;
+}
+
+$("openext").addEventListener("click", async () => {
+  const url = `${location.origin}/print.html?L=${labelData}`;
+  if (!inLark) return window.open(url, "_blank");
+  try {
+    await larkJsConfig();
+    window.tt.openSchema({ schema: url, external: true, fail: () => fallbackOpen(url) });
+  } catch {
+    fallbackOpen(url);
+  }
+});
+function fallbackOpen(url) {
+  if (/Android/i.test(ua)) location.href = `intent://${url.replace(/^https?:\/\//, "")}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(url)};end`;
+  else lblNote(`Open this link in Safari/Chrome: <a href="${esc(url)}" target="_blank">print page</a>`);
+}
+$("printnow").addEventListener("click", () => window.print());
+
+async function loadRecent() {
+  try {
+    await loadBatches();
+    $("recentB").innerHTML = batches.slice(0, 15).map((b) => `<div class="lrow"><div class="t"><b>${esc(txt(b.fields["Product Name"]))}</b><span class="muted">${esc(txt(b.fields["Lot Code"]) || txt(b.fields["Batch No"]))} · ${esc(txt(b.fields["Label Batch Line"]))} · ${esc(txt(b.fields["Prod Date (label)"]))}</span></div><button class="ghost" data-b="${b.record_id}">Labels</button></div>`).join("") || `<p class="muted">No batches yet.</p>`;
+    const packs = await searchAll("packing", { field_names: ["Packing Ref", "Outlet", "Packing Summary", "Packing Label Data", "Created At"], sort: [{ field_name: "Created At", desc: true }], automatic_fields: false });
+    const seen = new Map();
+    for (const p of packs) { const ref = txt(p.fields["Packing Ref"]); if (ref && !seen.has(ref)) seen.set(ref, p); if (seen.size >= 15) break; }
+    $("recentP").innerHTML = [...seen.values()].map((p) => `<div class="lrow"><div class="t"><b>${esc(txt(p.fields.Outlet))} · ${esc(txt(p.fields["Packing Ref"]))}</b><span class="muted">${esc(txt(p.fields["Packing Summary"]).split("\n").join(" · "))}</span></div><button class="ghost" data-p="${p.record_id}">Labels</button></div>`).join("") || `<p class="muted">No packing yet.</p>`;
+    recentPacks = Object.fromEntries([...seen.values()].map((p) => [p.record_id, p]));
+  } catch (e) {
+    $("recentB").innerHTML = `<p class="note">Could not load: ${esc(e.message)}</p>`;
+  }
+}
+let recentPacks = {};
+$("v-labels").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-b]");
+  const p = e.target.closest("[data-p]");
+  if (b) { const rec = batches.find((x) => x.record_id === b.dataset.b); if (rec) openLabels(batchLine(rec), txt(rec.fields["Product Name"])); }
+  if (p) { const rec = recentPacks[p.dataset.p]; if (rec) openLabels(txt(rec.fields["Packing Label Data"]), `Packing → ${txt(rec.fields.Outlet)}`); }
+});
+
+// ---------- start ----------
+injectLabelCss();
+show(tab);
+renderRecipes();
+renderPacking();
+(async () => {
+  try {
+    status("Signing in with Lark…");
+    await signIn();
+    status("");
+    await Promise.all([loadRecipes(), loadItems(), loadBatches().then(renderPacking)]);
+  } catch (e) {
+    status(`Sign-in or loading failed: ${esc(e.message)}. Open this app from Lark Workplace.`);
+  }
+})();

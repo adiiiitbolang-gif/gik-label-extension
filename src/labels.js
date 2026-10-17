@@ -22,6 +22,29 @@ export function codeLine(v) {
   return code && batch.startsWith(code) ? batch : [code, batch].filter(Boolean).join(" · ");
 }
 
+// Label data string, as built by the Base formulas and the print links:
+// lines joined by "^", each line n|c|b|p|e|r|q|s|a|d|k|last with every part URL-encoded.
+export const LINE_KEYS = ["name", "code", "batch", "prod", "exp", "run", "net", "storage", "allergens", "dest"];
+
+// Split before decoding so encoded "|" and "^" inside values stay intact.
+export function parseLabelData(raw) {
+  return String(raw || "")
+    .split(/\^|%5E/i)
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.split(/\||%7C/i).map((x) => {
+        try { return decodeURIComponent(x); } catch { return x; }
+      });
+      const v = {};
+      LINE_KEYS.forEach((k, i) => (v[k] = parts[i] || ""));
+      return { v, count: parseInt(parts[10], 10) || 1, lastNet: parts[11] || "" };
+    });
+}
+
+export function encodeLine(v, count = 1, lastNet = "") {
+  return [...LINE_KEYS.map((k) => encodeURIComponent(v[k] || "")), count, encodeURIComponent(lastNet)].join("|");
+}
+
 // v: { name, code, batch, prod, exp, run, net, storage, allergens, dest }
 export function labelHtml(v, i, total) {
   return `<div class="label">

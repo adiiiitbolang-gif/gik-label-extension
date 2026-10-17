@@ -14,5 +14,8 @@
     "@lark-base-open/js-sdk": "1.0.2",
     "esbuild": "0.24.2",
     "qrcode-generator": "1.4.4"
+  },
+  "devDependencies": {
+    "wrangler": "^4.151.1"
   }
 }
