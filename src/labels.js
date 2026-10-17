@@ -15,12 +15,19 @@ export function qrSvg(text) {
   return `<svg viewBox="0 0 ${n + 2} ${n + 2}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${path}" fill="#000"/></svg>`;
 }
 
+// "MM-WIP0006 · PRD-0012", or just the lot when it already starts with the code ("MM-WIP0006-261018").
+export function codeLine(v) {
+  const code = String(v.code || "");
+  const batch = String(v.batch || "");
+  return code && batch.startsWith(code) ? batch : [code, batch].filter(Boolean).join(" · ");
+}
+
 // v: { name, code, batch, prod, exp, run, net, storage, allergens, dest }
 export function labelHtml(v, i, total) {
   return `<div class="label">
     <div class="l-name">${esc(v.name)}</div>
     <div class="l-body">
-      <div><b>${esc(v.code)}</b> · ${esc(v.batch)}</div>
+      <div><b>${esc(codeLine(v))}</b></div>
       ${v.run ? `<div class="l-run">${esc(v.run)}</div>` : ""}
       <div>Prod ${esc(v.prod)}</div>
       <div class="l-exp">EXP ${esc(v.exp)}</div>

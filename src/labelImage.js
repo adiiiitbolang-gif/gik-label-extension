@@ -1,4 +1,5 @@
 import qrcode from "qrcode-generator";
+import { codeLine } from "./labels.js";
 
 // Draws one 50 x 30 mm label as a PNG for thermal-printer apps (share sheet / save).
 // 203 dpi is the common thermal head resolution: 50 mm = 400 px, 30 mm = 240 px.
@@ -73,7 +74,7 @@ export function drawLabel(v, i, total) {
   const textW = qrX - PAD - 6;
 
   ctx.font = `bold 17px ${FONT}`;
-  ctx.fillText(clip(ctx, `${v.code} · ${v.batch}`, textW), PAD, y);
+  ctx.fillText(clip(ctx, codeLine(v), textW), PAD, y);
   y += 21;
   if (v.run) {
     ctx.font = `bold 17px ${FONT}`;
