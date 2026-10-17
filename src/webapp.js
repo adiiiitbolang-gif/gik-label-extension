@@ -1,5 +1,6 @@
 import { esc, encodeLine, parseLabelData, sheetHtml, injectLabelCss } from "./labels.js";
 import { drawLabel, canvasToFile } from "./labelImage.js";
+import { setupDirectPrint } from "./directPrint.js";
 
 // GIK Production web app: opened from Lark Workplace (phone/tablet) or a browser.
 // Writes go straight to the Production base with the signed-in user's own token (through the Worker),
@@ -133,14 +134,15 @@ const num = (x) => parseFloat(txt(x)) || 0;
 const fmt = (n) => (Math.round(n * 100) / 100).toLocaleString("en-US");
 
 // ---------- tabs ----------
-let tab = store.get("gik.tab", "prod");
+let tab = store.get("gik.tab", "today");
 function show(t) {
   tab = t;
   store.set("gik.tab", t);
   document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
   document.querySelectorAll("[data-view]").forEach((s) => (s.hidden = s.dataset.view !== t));
-  $("bar").hidden = t === "labels";
+  $("bar").hidden = t === "labels" || t === "today";
   if (t === "labels") loadRecent();
+  if (t === "today" && booted) loadDay();
   updateBar();
 }
 document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => show(b.dataset.tab)));
@@ -520,6 +522,16 @@ function fallbackOpen(url) {
 }
 $("printnow").addEventListener("click", () => window.print());
 
+// Outside Lark (Chrome): print straight to the XP-4601B over Bluetooth, no printer app needed.
+if (!inLark) {
+  setupDirectPrint({
+    btn: $("direct"), pickBtn: $("pick"), bleBtn: $("ble"), more: $("directMore"), note: $("directNote"),
+    getCanvases: () => labelList(labelData).map((l) => drawLabel(l.v, l.i, l.total)),
+  });
+  if (!$("direct").hidden) $("openext").hidden = true;
+  else $("openext").textContent = "Open print page";
+}
+
 async function loadRecent() {
   try {
     await loadBatches();
@@ -541,6 +553,157 @@ $("v-labels").addEventListener("click", (e) => {
   if (p) { const rec = recentPacks[p.dataset.p]; if (rec) openLabels(txt(rec.fields["Packing Label Data"]), `Packing → ${txt(rec.fields.Outlet)}`); }
 });
 
+// ---------- today dashboard ----------
+let day = new Date();
+day.setHours(0, 0, 0, 0);
+let dayData = { batches: [], packs: [] };
+
+const DAY_MS = 86400000;
+const sameDay = (a, b) => a.toDateString() === b.toDateString();
+const time = (ms) => new Date(ms).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+const pct = (x) => { const n = num(x); return n ? Math.round(n <= 3 ? n * 100 : n) : 0; };
+
+// Newest first; stop paging once records are older than the day.
+async function fetchDay(table, fields, dateField, start, end) {
+  const out = [];
+  let page_token = "";
+  for (;;) {
+    const d = await base(table, "search", { field_names: fields, sort: [{ field_name: dateField, desc: true }], automatic_fields: false }, { page_size: 200, ...(page_token ? { page_token } : {}) });
+    const items = d.items || [];
+    for (const r of items) {
+      const t = num(r.fields[dateField]);
+      if (t >= start && t < end) out.push(r);
+    }
+    const last = items.length ? num(items[items.length - 1].fields[dateField]) : 0;
+    if (!d.has_more || last < start) break;
+    page_token = d.page_token;
+  }
+  return out.reverse(); // oldest first within the day
+}
+
+async function loadDay() {
+  const start = day.getTime();
+  const end = start + DAY_MS;
+  $("dtitle").textContent = sameDay(day, new Date()) ? "Today" : day.toLocaleDateString("en-GB", { weekday: "long" });
+  $("dsub").textContent = day.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+  $("dnext").disabled = sameDay(day, new Date());
+  $("kpis").innerHTML = `<p class="muted">Loading…</p>`;
+  try {
+    const [b, p] = await Promise.all([
+      fetchDay("batches", ["Batch No", "Lot Code", "Product Name", "Product Code", "Prod Date (label)", "Expiry (label)", "Label Batch Line", "Label Net", "Actual Output Qty", "Unit", "Storage", "Allergens", "Containers (labels)", "Production Date", "Recipe Runs (batch)", "Yield %", "Created By"], "Production Date", start, end),
+      fetchDay("packing", ["Item Name", "Item Code", "Outlet", "Total Qty", "Unit", "Label Count", "Container Net", "Packing Ref", "Packing Date", "Created By", "Label Line"], "Packing Date", start, end),
+    ]);
+    dayData = { batches: b, packs: p };
+    renderDay();
+  } catch (e) {
+    $("kpis").innerHTML = `<p class="note">Could not load: ${esc(e.message)}</p>`;
+  }
+}
+
+// Packing rows grouped by submission (Packing Ref).
+function groupPacks(rows) {
+  const m = new Map();
+  for (const r of rows) {
+    const ref = txt(r.fields["Packing Ref"]) || r.record_id;
+    if (!m.has(ref)) m.set(ref, []);
+    m.get(ref).push(r);
+  }
+  return [...m.entries()].map(([ref, rs]) => ({ ref, rows: rs, outlet: txt(rs[0].fields.Outlet), at: num(rs[0].fields["Packing Date"]), by: txt(rs[0].fields["Created By"]) }));
+}
+
+function packHtml(g) {
+  const lines = g.rows.map((r) => `<li>${esc(txt(r.fields["Item Name"]))} — ${fmt(num(r.fields["Label Count"]))} × ${fmt(num(r.fields["Container Net"]))} ${esc(txt(r.fields.Unit))} <span class="muted">(${fmt(num(r.fields["Total Qty"]))})</span></li>`).join("");
+  return `<div class="pk"><div class="t"><b>${esc(time(g.at))}</b> <span class="muted">· ${esc(g.by)} · ${esc(g.ref)}</span><ul>${lines}</ul></div><button class="ghost" data-pref="${esc(g.ref)}">Labels</button></div>`;
+}
+
+function renderDay() {
+  const { batches: bs, packs: ps } = dayData;
+  const out = ps.filter((r) => txt(r.fields.Outlet) !== "Central Kitchen");
+  const ck = ps.filter((r) => txt(r.fields.Outlet) === "Central Kitchen");
+  const outlets = [...new Set(out.map((r) => txt(r.fields.Outlet)))];
+
+  // Balance per product made that day: produced vs packed to outlets (repacks excluded).
+  const bal = new Map();
+  for (const b of bs) {
+    const code = txt(b.fields["Product Code"]);
+    const e = bal.get(code) || { name: txt(b.fields["Product Name"]), unit: txt(b.fields.Unit), made: 0, sent: 0 };
+    e.made += num(b.fields["Actual Output Qty"]);
+    bal.set(code, e);
+  }
+  for (const r of out) {
+    const e = bal.get(txt(r.fields["Item Code"]));
+    if (e) e.sent += num(r.fields["Total Qty"]);
+  }
+  const balRows = [...bal.values()];
+  const waiting = balRows.filter((e) => e.made - e.sent > 0.0001).length;
+
+  $("kpis").innerHTML = [
+    { k: "Produced", v: bal.size, s: `${bs.length} batch entr${bs.length === 1 ? "y" : "ies"}`, go: "s-prod" },
+    { k: "Sent to outlets", v: outlets.length, s: `${groupPacks(out).length} packing(s)`, go: "s-out" },
+    { k: "Repacked (CK)", v: new Set(ck.map((r) => txt(r.fields["Item Code"]))).size, s: `${ck.length} line(s)`, go: "s-ck" },
+    { k: "Still to pack", v: waiting, s: "products with stock left", go: "s-bal", alert: waiting > 0 },
+  ].map((x) => `<button class="kpi${x.alert ? " alert" : ""}" data-go="${x.go}"><div class="k">${x.k}</div><div class="v">${x.v}</div><div class="s">${x.s}</div></button>`).join("");
+
+  $("dprod").innerHTML = bs.length
+    ? bs.map((b) => {
+        const y = pct(b.fields["Yield %"]);
+        const meta = [time(num(b.fields["Production Date"])), txt(b.fields["Label Batch Line"]), txt(b.fields["Lot Code"]) || txt(b.fields["Batch No"]), txt(b.fields["Created By"])].filter(Boolean).join(" · ");
+        return `<div class="lrow"><div class="t"><b>${esc(txt(b.fields["Product Name"]))}</b><span class="muted">${esc(meta)}</span></div>${y ? `<span class="badge ${y < 70 || y > 130 ? "warn" : "ok"}">${y}%</span>` : ""}<button class="ghost" data-bid="${b.record_id}">Labels</button></div>`;
+      }).join("")
+    : `<p class="muted">No production entered.</p>`;
+
+  $("dout").innerHTML = outlets.length
+    ? outlets.map((o) => {
+        const gs = groupPacks(out.filter((r) => txt(r.fields.Outlet) === o));
+        const items = new Set(gs.flatMap((g) => g.rows.map((r) => txt(r.fields["Item Code"])))).size;
+        return `<details class="grp"><summary><span class="t">${esc(o)}</span><span class="badge">${items} item(s)</span><span class="badge">${gs.length} packing(s)</span></summary>${gs.map(packHtml).join("")}</details>`;
+      }).join("")
+    : `<p class="muted">Nothing packed to outlets.</p>`;
+
+  const ckGroups = groupPacks(ck);
+  $("dck").innerHTML = ckGroups.length
+    ? `<details class="grp" open><summary><span class="t">Central Kitchen</span><span class="badge">${ckGroups.length} repack(s)</span></summary>${ckGroups.map(packHtml).join("")}</details>`
+    : `<p class="muted">No repacking.</p>`;
+
+  $("dbal").innerHTML = balRows.length
+    ? `<table class="bal"><thead><tr><th>Product</th><th>Made</th><th>Packed</th><th>Left</th></tr></thead><tbody>${balRows.map((e) => {
+        const left = e.made - e.sent;
+        return `<tr><td>${esc(e.name)}</td><td>${fmt(e.made)} ${esc(e.unit)}</td><td>${fmt(e.sent)}</td><td><span class="badge ${left > 0.0001 ? "warn" : "ok"}">${fmt(left)}</span></td></tr>`;
+      }).join("")}</tbody></table><p class="muted">Packed = sent to outlets on this day (Central Kitchen repacks not counted).</p>`
+    : `<p class="muted">Nothing produced.</p>`;
+}
+
+$("v-today").addEventListener("click", (e) => {
+  const go = e.target.closest("[data-go]");
+  if (go) return $(go.dataset.go).scrollIntoView({ behavior: "smooth" });
+  const jump = e.target.closest(".jump a");
+  if (jump) {
+    e.preventDefault();
+    return document.querySelector(jump.getAttribute("href")).scrollIntoView({ behavior: "smooth" });
+  }
+  const bid = e.target.closest("[data-bid]");
+  if (bid) {
+    const rec = dayData.batches.find((x) => x.record_id === bid.dataset.bid);
+    if (rec) openLabels(batchLine(rec), txt(rec.fields["Product Name"]));
+  }
+  const pref = e.target.closest("[data-pref]");
+  if (pref) {
+    const rows = dayData.packs.filter((r) => (txt(r.fields["Packing Ref"]) || r.record_id) === pref.dataset.pref);
+    openLabels(rows.map((r) => txt(r.fields["Label Line"])).filter(Boolean).join("^"), `Packing → ${txt(rows[0].fields.Outlet)}`);
+  }
+});
+$("dprev").addEventListener("click", () => { day = new Date(day.getTime() - DAY_MS); loadDay(); });
+$("dnext").addEventListener("click", () => { if (!sameDay(day, new Date())) { day = new Date(day.getTime() + DAY_MS); loadDay(); } });
+$("dtoday").addEventListener("click", () => { day = new Date(); day.setHours(0, 0, 0, 0); loadDay(); });
+$("dreload").addEventListener("click", loadDay);
+
+// Sticky section links sit right under the header.
+const setTop = () => document.documentElement.style.setProperty("--toph", `${document.querySelector(".top").offsetHeight}px`);
+addEventListener("resize", setTop);
+setTop();
+
+let booted = false;
+
 // ---------- start ----------
 injectLabelCss();
 show(tab);
@@ -550,8 +713,9 @@ renderPacking();
   try {
     status("Signing in with Lark…");
     await signIn();
+    booted = true;
     status("");
-    await Promise.all([loadRecipes(), loadItems(), loadBatches().then(renderPacking)]);
+    await Promise.all([loadRecipes(), loadItems(), loadBatches().then(renderPacking), tab === "today" ? loadDay() : null]);
   } catch (e) {
     status(`Sign-in or loading failed: ${esc(e.message)}. Open this app from Lark Workplace.`);
   }

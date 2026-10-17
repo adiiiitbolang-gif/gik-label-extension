@@ -81,7 +81,51 @@ select.num{text-align:left}
 .lrow{display:flex;gap:10px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
 .lrow .t{flex:1;min-width:0}
 .lrow .t b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-h2{font-size:15px;margin:18px 0 8px}
+h2{font-size:15px;margin:22px 0 8px;scroll-margin-top:120px}
+/* today dashboard */
+.daynav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.navbtn{width:44px;height:44px;border:1px solid var(--line);border-radius:10px;background:var(--panel);font-size:22px;cursor:pointer}
+.dlabel{display:grid;min-width:0;flex:1}
+.dlabel b{font-size:17px}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;text-align:left;cursor:pointer}
+.kpi .v{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}
+.kpi .k{font-size:13px;color:var(--muted)}
+.kpi .s{font-size:12px;color:var(--muted)}
+.kpi.alert .v{color:var(--bad)}
+@media (max-width:720px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.jump{position:sticky;top:var(--toph,96px);z-index:3;display:flex;gap:6px;overflow-x:auto;padding:10px 0;background:var(--bg)}
+.jump a{flex:none;padding:7px 12px;border-radius:16px;background:var(--panel);border:1px solid var(--line);color:var(--ink);text-decoration:none;font-size:14px;font-weight:600}
+.badge{display:inline-block;padding:1px 8px;border-radius:10px;background:var(--soft);font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
+.badge.warn{background:var(--warn-bg);color:var(--warn-ink)}
+.badge.ok{background:var(--ok-bg);color:var(--ok-ink)}
+details.grp{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:8px}
+details.grp summary{display:flex;align-items:center;gap:10px;padding:12px;cursor:pointer;list-style:none}
+details.grp summary::-webkit-details-marker{display:none}
+details.grp summary::before{content:"▸";color:var(--muted);transition:transform .15s}
+details.grp[open] summary::before{transform:rotate(90deg)}
+details.grp summary .t{flex:1;font-weight:700}
+.pk{border-top:1px solid var(--line);padding:10px 12px;display:flex;gap:10px;align-items:flex-start}
+.pk .t{flex:1;min-width:0}
+.pk ul{margin:4px 0 0;padding-left:18px;font-size:14px}
+table.bal{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:14px}
+table.bal th,table.bal td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:right;font-variant-numeric:tabular-nums}
+table.bal th:first-child,table.bal td:first-child{text-align:left}
+table.bal th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;font-weight:600}
+.links{display:flex;gap:16px;justify-content:center;margin-top:6px}
+.linkbtn{border:0;background:none;color:var(--accent);font-weight:600;font-size:14px;text-decoration:underline;cursor:pointer;padding:4px}
+/* phone: tabs become a bottom bar */
+.ti{display:none}
+@media (max-width:720px){
+  .tabs{position:fixed;left:0;right:0;bottom:0;margin:0;background:var(--panel);border-top:1px solid var(--line);justify-content:space-around;padding-bottom:env(safe-area-inset-bottom);z-index:7}
+  .tab{flex:1;display:grid;justify-items:center;gap:2px;padding:8px 4px;font-size:12px;border-bottom:0;border-top:3px solid transparent}
+  .tab[aria-selected="true"]{border-top-color:var(--accent)}
+  .ti{display:block;font-size:20px;line-height:1}
+  .top{padding-bottom:10px}
+  .bar{bottom:calc(60px + env(safe-area-inset-bottom))}
+  main{padding-bottom:190px}
+  .jump{top:var(--toph,52px)}
+}
 .printsheet{display:none}
 dialog{border:0;border-radius:14px;padding:18px;max-width:min(520px,92vw);background:var(--panel);color:var(--ink)}
 dialog::backdrop{background:rgba(0,0,0,.4)}
@@ -95,16 +139,39 @@ dialog ul{padding-left:18px;margin:8px 0;max-height:50vh;overflow:auto}
 <header class="top">
   <div class="brand"><h1>GIK Production</h1><span class="who" id="who"></span></div>
   <nav class="tabs" role="tablist">
-    <button class="tab" role="tab" data-tab="prod" aria-selected="true">Production</button>
-    <button class="tab" role="tab" data-tab="pack" aria-selected="false">Packing</button>
-    <button class="tab" role="tab" data-tab="labels" aria-selected="false">Labels</button>
+    <button class="tab" role="tab" data-tab="today" aria-selected="true"><span class="ti">📊</span>Today</button>
+    <button class="tab" role="tab" data-tab="prod" aria-selected="false"><span class="ti">🍳</span>Production</button>
+    <button class="tab" role="tab" data-tab="pack" aria-selected="false"><span class="ti">📦</span>Packing</button>
+    <button class="tab" role="tab" data-tab="labels" aria-selected="false"><span class="ti">🖨</span>Labels</button>
   </nav>
 </header>
 
 <main>
   <div id="status" class="note" hidden></div>
 
-  <section id="v-prod" data-view="prod">
+  <section id="v-today" data-view="today">
+    <div class="daynav">
+      <button class="navbtn" id="dprev" aria-label="Previous day">‹</button>
+      <div class="dlabel"><b id="dtitle"></b><span class="muted" id="dsub"></span></div>
+      <button class="navbtn" id="dnext" aria-label="Next day">›</button>
+      <button class="chip" id="dtoday">Today</button>
+      <button class="chip" id="dreload" aria-label="Refresh">↻</button>
+    </div>
+    <div class="kpis" id="kpis"></div>
+    <nav class="jump" id="jump">
+      <a href="#s-prod">Production</a><a href="#s-out">To outlets</a><a href="#s-ck">Repack (CK)</a><a href="#s-bal">Balance</a>
+    </nav>
+    <h2 id="s-prod">Production</h2>
+    <div class="list" id="dprod"></div>
+    <h2 id="s-out">Packed to outlets</h2>
+    <div id="dout"></div>
+    <h2 id="s-ck">Repack · Central Kitchen</h2>
+    <div id="dck"></div>
+    <h2 id="s-bal">Balance · produced vs packed</h2>
+    <div id="dbal"></div>
+  </section>
+
+  <section id="v-prod" data-view="prod" hidden>
     <div class="toolbar">
       <input id="psearch" class="search" type="search" placeholder="Search recipe or code" autocomplete="off">
       <button id="pfilled" class="chip" aria-pressed="false">Filled only</button>
@@ -130,10 +197,13 @@ dialog ul{padding-left:18px;margin:8px 0;max-height:50vh;overflow:auto}
     <div id="lblset" class="card" hidden>
       <b id="lbltitle"></b>
       <div class="actions">
-        <button id="share" class="primary">Send to printer app</button>
-        <button id="openext" class="ghost">Open in browser to print</button>
+        <button id="direct" class="primary" hidden>Print to label printer</button>
+        <button id="openext" class="primary">Print (opens Chrome)</button>
+        <button id="share" class="ghost">Send to printer app</button>
         <button id="printnow" class="ghost">Print here</button>
       </div>
+      <div id="directMore" class="links" hidden><button id="pick" class="linkbtn">Choose another printer</button><button id="ble" class="linkbtn">Bluetooth LE printer</button></div>
+      <div id="directNote" class="note" hidden style="margin-top:10px"></div>
       <div id="lblnote" class="note" hidden style="margin-top:10px"></div>
       <div class="previews" id="previews"></div>
     </div>

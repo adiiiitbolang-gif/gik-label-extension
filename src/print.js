@@ -1,5 +1,6 @@
 import { sheetHtml, multiSheetHtml, injectLabelCss, esc, parseLabelData } from "./labels.js";
 import { drawLabel, canvasToFile } from "./labelImage.js";
+import { setupDirectPrint } from "./directPrint.js";
 
 // Standalone print page, opened from Lark (desktop button or phone message card).
 // Two modes:
@@ -80,6 +81,14 @@ function labelList() {
     for (let i = 1; i <= n; i++) out.push({ v: i === n && g.lastNet ? { ...g.v, net: g.lastNet } : g.v, i, total: n });
   }
   return out;
+}
+
+// Direct printing (Chrome, not inside Lark): TSPL over Bluetooth to the label printer.
+if (hasData && !inLarkApp) {
+  setupDirectPrint({
+    btn: $("directBtn"), pickBtn: $("pickBtn"), bleBtn: $("bleBtn"), more: $("directMore"), note: $("directNote"),
+    getCanvases: () => labelList().map((l) => drawLabel(l.v, l.i, l.total)),
+  });
 }
 
 async function labelFiles() {
