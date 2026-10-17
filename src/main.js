@@ -47,7 +47,7 @@ async function loadRecord(recordId) {
     })
   );
   current = v;
-  $("copies").value = parseInt(v.count, 10) || 1;
+  $("copies").value = 1;
   $("picked").textContent = `${v.batch} · ${v.name}`;
   $("batchSelect").value = recordId;
   setStatus("");

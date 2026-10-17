@@ -17,7 +17,7 @@ const v = {
 };
 
 injectLabelCss();
-$("copies").value = parseInt(qs.get("k"), 10) || 1;
+$("copies").value = 1;
 $("title").textContent = v.batch ? `${v.batch} · ${v.name}` : "No batch selected";
 if (!v.batch) $("empty").hidden = false;
 
@@ -39,3 +39,5 @@ $("printBtn").addEventListener("click", () => {
 // Lark's in-app browser on phones may not support printing; show how to open in the system browser.
 if (/Lark|Feishu/i.test(navigator.userAgent) && /Android|iPhone|iPad/i.test(navigator.userAgent)) $("inapp").hidden = false;
 render();
+// "Print 1 label" link: open the print dialog right away.
+if (v.batch && qs.get("autoprint") === "1") setTimeout(() => { try { window.print(); } catch { $("inapp").hidden = false; } }, 400);
