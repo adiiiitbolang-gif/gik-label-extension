@@ -3,7 +3,8 @@ import { sheetHtml, multiSheetHtml, injectLabelCss, esc } from "./labels.js";
 // Standalone print page, opened from Lark (desktop button or phone message card).
 // Two modes:
 //   single batch: ?n=&c=&b=&p=&e=&r=&q=&s=&a=&d=      (one product, copies chosen here)
-//   packing:      ?L=<line>^<line>...                   (each line: n|c|b|p|e|r|q|s|a|d|k, every part URL-encoded)
+//   packing:      ?L=<line>^<line>...                   (each line: n|c|b|p|e|r|q|s|a|d|k|last, every part URL-encoded;
+//                                                         q = net per container, last = net of the last container)
 const $ = (id) => document.getElementById(id);
 const qs = new URLSearchParams(location.search);
 const KEYS = ["name", "code", "batch", "prod", "exp", "run", "net", "storage", "allergens", "dest"];
@@ -22,7 +23,7 @@ function packingLines() {
       });
       const v = {};
       KEYS.forEach((k, i) => (v[k] = parts[i] || ""));
-      return { v, count: parseInt(parts[10], 10) || 1 };
+      return { v, count: parseInt(parts[10], 10) || 1, lastNet: parts[11] || "" };
     });
 }
 
@@ -41,7 +42,7 @@ if (lines) {
   const first = lines[0]?.v || {};
   $("title").textContent = `${first.run || "Packing"} → ${first.dest || ""} · ${lines.length} item(s), ${total} label(s)`;
   $("stepperWrap").hidden = true;
-  $("lineList").innerHTML = lines.map((l) => `<li><b>${esc(l.v.name)}</b> · ${esc(l.v.net)} · ${l.count} label(s)</li>`).join("");
+  $("lineList").innerHTML = lines.map((l) => `<li><b>${esc(l.v.name)}</b> · ${l.count} × ${esc(l.v.net)}${l.lastNet && l.lastNet !== l.v.net ? ` (last ${esc(l.lastNet)})` : ""}</li>`).join("");
   $("lineList").hidden = false;
 } else {
   $("title").textContent = single.batch ? `${single.batch} · ${single.name}` : "No batch selected";

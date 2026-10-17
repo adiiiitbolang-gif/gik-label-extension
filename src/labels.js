@@ -32,13 +32,14 @@ export function labelHtml(v, i, total) {
 
 // lines: [{ v, count }] — every label is numbered within its own line.
 export function multiSheetHtml(lines) {
-  return lines.map((l) => sheetHtml(l.v, l.count)).join("");
+  return lines.map((l) => sheetHtml(l.v, l.count, l.lastNet)).join("");
 }
 
-export function sheetHtml(v, count) {
+// lastNet: net quantity of the last container when it holds less (e.g. 95 pcs as 9 x 10 + 1 x 5).
+export function sheetHtml(v, count, lastNet = "") {
   const n = Math.max(1, Math.min(200, parseInt(count, 10) || 1));
   let html = "";
-  for (let i = 1; i <= n; i++) html += labelHtml(v, i, n);
+  for (let i = 1; i <= n; i++) html += labelHtml(i === n && lastNet ? { ...v, net: lastNet } : v, i, n);
   return html;
 }
 
