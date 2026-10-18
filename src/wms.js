@@ -373,7 +373,9 @@ export function createWms(ctx) {
     drafts[mode] = fresh(mode);
     save();
     status(`✅ ${label}: ${recs.length} baris tersimpan di WMS.`, "ok");
-    await load(true); // stock and FIFO changed
+    render();
+    // Stock and FIFO changed; Lark needs a moment to compute Sisa for the new rows.
+    setTimeout(() => load(true).catch(() => {}), 3000);
   }
 
   render();
