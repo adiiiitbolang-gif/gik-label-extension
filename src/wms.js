@@ -1,14 +1,16 @@
 import { esc } from "./labels.js";
 
-// Fast WMS input (WMS WH Matchaman base), replacing the four Base forms with sheet-style screens.
-// Each screen writes exactly the fields its form writes, so every WMS formula and workflow
+// Fast WMS input (WMS WH Matchaman base), replacing the four Base forms.
+// Each mode writes exactly the fields its form writes, so every WMS formula and workflow
 // (FIFO, Sisa, Cek Batch, Area Outbond nightly cut, notifications) works as before:
 //   Inbound  -> Stock Batch: Item, PO Number, Qty Transfer, Arrival Date, Rak/Level Tujuan, Expired Date, Simpan Sementara, Foto
 //   Transfer -> Stock Batch: Item, Batch Asal, Qty Transfer, Rak/Level Tujuan
 //   Outbond  -> Stock Batch: Tujuan Outlet, Tgl Kirim Rencana, Rak Tujuan, Item, Batch Asal, Qty Transfer
 //   Waste    -> Daily Inventory: Type, Date, Tgl Kirim, Destination, Item, Batch Item, Quantity, Attachments
-// What the app adds: FIFO batch picked automatically (split over several batches when one is not enough),
-// default rack/level from Master Items, and the same hints the forms show, before submitting.
+// Input is one item list for every mode: all items by category (search + category chips pinned on top),
+// in walking order inside a category, a qty box per item; filling a qty opens that mode's own fields.
+// The app picks the FIFO batch (split over several batches when one is not enough), defaults rak/level
+// from Master Items and shows the same hints the forms show.
 
 const ACTIVE_BATCH_VIEW = "vew5N17Guu"; // Stock Batch view "Batch aktif - untuk dipilih (Batch Sumber)"
 const MODES = [
@@ -17,6 +19,8 @@ const MODES = [
   { id: "out", label: "Outbond", icon: "🚚" },
   { id: "waste", label: "Kirim / Rusak", icon: "🗑" },
 ];
+const CAT_ORDER = ["Raw Materials", "Work In Process", "KITCHEN INVENTORY (FOOD PRODUCTION RELATED)", "Supporting Inventory", "Chemical", "Medical", "Uniform", "Merchandise"];
+const ZONE_ORDER = ["Pallet", "Dry Storage", "Chiller", "Freezer", "Outbound"];
 
 const today = () => {
   const d = new Date();
@@ -37,17 +41,31 @@ export function createWms(ctx) {
   let loaded = false;
   let loading = null;
   const data = { items: [], racks: new Map(), pos: new Map(), limits: [], batches: [], opt: { rak: [], level: [], outlet: [], type: [], dest: [] }, at: 0 };
-  const drafts = {};
-  for (const m of MODES) drafts[m.id] = store.get(`gik.wms.${m.id}`, null) || fresh(m.id);
 
+  // ---------- drafts (kept on the phone) ----------
   function fresh(m) {
-    if (m === "in") return { head: { po: "", arrival: today() }, rows: [{}] };
-    if (m === "out") return { head: { outlet: "", kirim: today(), rak: "Area Outbond" }, rows: [{}], q: {}, picked: {}, b: {} };
-    if (m === "waste") return { head: { type: "Rusak", date: today(), kirim: today(), dest: "" }, rows: [{}] };
-    return { head: {}, rows: [{}] };
+    const sheet = { q: {}, x: {}, picked: {} };
+    if (m === "in") return { head: { po: "", arrival: today() }, ...sheet };
+    if (m === "out") return { head: { outlet: "", kirim: today(), rak: "Area Outbond" }, ...sheet };
+    if (m === "waste") return { head: { type: "Rusak", date: today(), kirim: today(), dest: "" }, ...sheet };
+    return { head: {}, ...sheet };
+  }
+  const drafts = {};
+  for (const m of MODES) {
+    const saved = store.get(`gik.wms.${m.id}`, null);
+    drafts[m.id] = saved?.q && saved?.x ? saved : { ...fresh(m.id), head: { ...fresh(m.id).head, ...(saved?.head || {}) } };
   }
   const d = () => drafts[mode];
   const save = () => store.set(`gik.wms.${mode}`, drafts[mode]);
+  const xOf = (id) => (d().x[id] ||= {});
+
+  // List view state (shared by the modes; search is cleared when switching mode).
+  let filter = "all"; // all | filled | todo
+  let cat = "all";
+  let query = "";
+  let open = ""; // item whose batch picker is open
+  let hideZero = store.get("gik.wms.hide0", false);
+  const needsStock = () => mode !== "in";
 
   // ---------- data ----------
   async function load(force = false) {
@@ -91,6 +109,7 @@ export function createWms(ctx) {
   function homeOf(it) {
     const list = it.racks.map((id) => data.racks.get(id)).filter(Boolean);
     return {
+      list,
       induks: [...new Set(list.map((r) => r.induk).filter(Boolean))],
       levelFor: (induk) => list.find((r) => r.induk === induk)?.level || "",
       levelsIn: (induk) => [...new Set(list.filter((r) => r.induk === induk).map((r) => r.level).filter(Boolean))],
@@ -128,176 +147,53 @@ export function createWms(ctx) {
     return { parts, short: left, none: false };
   }
 
-  // ---------- Outbond pick sheet ----------
-  // 20-30 items per outbond: every item is listed, grouped by category, and within a category
-  // in walking order (Lt 2 -> Lt 1 dry -> chiller -> freezer) with its FIFO batch and position.
-  // Staff type the qty, walk the route, tick ✓ when the right batch is in hand, then save once.
-  let outFilter = "all";
-  let outCat = "all";
-  let hideZero = store.get("gik.wms.hide0", false);
-  const CAT_ORDER = ["Raw Materials", "Work In Process", "KITCHEN INVENTORY (FOOD PRODUCTION RELATED)", "Supporting Inventory", "Chemical", "Medical", "Uniform", "Merchandise"];
+  const rowOf = (id) => ({ item: id, qty: d().q[id], ...(d().x[id] || {}) });
+
+  // ---------- ordering: category, then walking route ----------
   const catOf = (it) => it.cat || "Tanpa kategori";
   const catRank = (c) => { const i = CAT_ORDER.indexOf(c); return i < 0 ? 50 : i; };
-  function outCategories() {
-    return [...new Set(data.items.map(catOf))].sort((a, b) => catRank(a) - catRank(b) || a.localeCompare(b));
+  const categories = () => [...new Set(data.items.map(catOf))].sort((a, b) => catRank(a) - catRank(b) || a.localeCompare(b));
+
+  // Position used for the route: the FIFO batch (taking stock out) or the item's home rack (putting stock in).
+  function placeOf(it) {
+    if (mode === "in") return homeOf(it).list[0] || null;
+    const first = fifo(it.id)[0];
+    if (!first) return null;
+    return data.pos.get(first.pos) || [...data.racks.values()].find((r) => r.induk && first.pos.startsWith(`${r.induk} `)) || { name: first.pos };
   }
-  let outQuery = "";
-  let outOpen = "";
-  const ZONE_ORDER = ["Pallet", "Dry Storage", "Chiller", "Freezer", "Outbound"];
-  const outDraft = () => {
-    const o = drafts.out;
-    if (!o.q) Object.assign(o, { q: {}, picked: {}, b: {} });
-    return o;
-  };
 
   function routeKey(it) {
-    const first = fifo(it.id)[0];
-    // Exact position from Master Racks, else any level of the same rak (same zone and floor).
-    const p = first ? data.pos.get(first.pos) || [...data.racks.values()].find((r) => r.induk && first.pos.startsWith(`${r.induk} `)) : null;
-    const cat = `${String(catRank(catOf(it))).padStart(2, "0")}|${catOf(it)}`;
-    if (!first) return { key: `${cat}|2|${it.name}`, group: catOf(it) }; // no stock: end of its category
-    if (!p) return { key: `${cat}|1|${it.name}`, group: catOf(it) };
-    const floor = p.lantai === "Lt 2" ? 0 : 1;
+    const c = `${String(catRank(catOf(it))).padStart(2, "0")}|${catOf(it)}`;
+    const p = placeOf(it);
+    if (needsStock() && !fifo(it.id).length) return `${c}|2|${it.name}`; // no stock: end of its category
+    if (!p || !p.zone) return `${c}|1|${it.name}`;
     const zone = ZONE_ORDER.indexOf(p.zone);
-    return { key: `${cat}|0|${floor}|${zone < 0 ? 8 : zone}|${p.induk}|${String(p.level).padStart(2, "0")}|${it.name}`, group: catOf(it) };
+    return `${c}|0|${p.lantai === "Lt 2" ? 0 : 1}|${zone < 0 ? 8 : zone}|${p.induk}|${String(p.level).padStart(2, "0")}|${it.name}`;
   }
 
-  function outItems() {
-    const o = outDraft();
-    const q = outQuery.trim().toLowerCase();
+  function listItems() {
+    const q = query.trim().toLowerCase();
+    const dr = d();
     return data.items
-      .filter((it) => !hideZero || fifo(it.id).length || num(o.q[it.id]) > 0)
-      .filter((it) => outCat === "all" || catOf(it) === outCat)
+      .filter((it) => !needsStock() || !hideZero || fifo(it.id).length || num(dr.q[it.id]) > 0)
+      .filter((it) => cat === "all" || catOf(it) === cat)
       .filter((it) => !q || `${it.name} ${it.code}`.toLowerCase().includes(q))
-      .filter((it) => outFilter === "all" || (num(o.q[it.id]) > 0 && (outFilter === "filled" || !o.picked[it.id])))
-      .map((it) => ({ it, ...routeKey(it) }))
-      .sort((a, b) => a.key.localeCompare(b.key));
+      .filter((it) => filter === "all" || (num(dr.q[it.id]) > 0 && (filter === "filled" || !dr.picked[it.id])))
+      .map((it) => ({ it, key: routeKey(it) }))
+      .sort((a, b) => a.key.localeCompare(b.key))
+      .map((r) => r.it);
   }
 
-  function outAlloc(it) {
-    const o = outDraft();
-    return allocate({ item: it.id, qty: o.q[it.id], batch: o.b[it.id] || "" });
+  function counts() {
+    const dr = d();
+    const filled = Object.keys(dr.q).filter((id) => num(dr.q[id]) > 0);
+    return { filled: filled.length, picked: filled.filter((id) => dr.picked[id]).length };
   }
 
-  function outRowHtml(it) {
-    const o = outDraft();
-    const list = fifo(it.id);
-    const qty = num(o.q[it.id]);
-    const total = list.reduce((t, b) => t + b.sisa, 0);
-    const pick = o.b[it.id] ? list.find((b) => b.id === o.b[it.id]) : list[0];
-    const loc = pick ? `${o.b[it.id] ? "" : "⭐ "}#${esc(pick.no)} · ${esc(pick.pos)} · sisa ${fmt(pick.sisa)}${pick.exp ? ` · exp ${esc(pick.exp)}` : ""}` : '<span class="danger">Tidak ada batch bersisa</span>';
-    let alloc = "";
-    if (qty > 0) {
-      const a = outAlloc(it);
-      if (a.none) alloc = '<span class="danger">Tidak bisa disimpan: tidak ada batch</span>';
-      else {
-        alloc = `Ambil ${a.parts.map((p) => `<b>${fmt(p.q)}</b> dari #${esc(p.b.no)} (${esc(p.b.pos)})`).join(" + ")}`;
-        if (a.notFifo) alloc += ' · <span class="danger">BUKAN FIFO</span>';
-        if (a.short > 0) alloc += ` · <span class="danger">kurang ${fmt(a.short)} → MINUS</span>`;
-      }
-    }
-    const batchSel = outOpen === it.id && list.length
-      ? `<select class="num obatch" data-k="obatch"><option value="">Auto FIFO (#${esc(list[0].no)})</option>${list.map((b) => `<option value="${b.id}" ${b.id === o.b[it.id] ? "selected" : ""}>#${esc(b.no)} · ${esc(b.pos)} · sisa ${fmt(b.sisa)}${b.exp ? ` · exp ${esc(b.exp)}` : ""}</option>`).join("")}</select>`
-      : "";
-    const zero = !list.length && !(qty > 0);
-    return `<div class="orow${qty > 0 ? " filled" : ""}${o.picked[it.id] ? " picked" : ""}${zero ? " zero" : ""}" data-oi="${it.id}">
-      <button class="opick" data-pick aria-label="Sudah diambil ${esc(it.name)}" aria-pressed="${Boolean(o.picked[it.id])}">✓</button>
-      <div class="oinfo"><b>${esc(it.name)}</b> <span class="muted">stok ${fmt(total)} ${esc(it.unit)}</span>
-        <button class="oloc" data-loc>${loc} ▾</button>${batchSel}
-        <div class="oalloc">${alloc}</div></div>
-      <label class="oqty"><input class="num" data-k="oqty" inputmode="decimal" enterkeyhint="next" value="${esc(o.q[it.id] ?? "")}" aria-label="Qty ${esc(it.name)}" ${zero ? "disabled" : ""}><span>${esc(it.unit)}</span></label>
-    </div>`;
-  }
-
-  // Category chips stay pinned at the top of the list while scrolling.
-  const catChips = () => `<div class="ocats">${["all", ...outCategories()].map((cat) => `<button class="chip" data-cat="${esc(cat)}" aria-pressed="${outCat === cat}">${cat === "all" ? "Semua kategori" : esc(cat.length > 26 ? `${cat.slice(0, 24)}…` : cat)}</button>`).join("")}</div>`;
-
-  function outSheetHtml() {
-    return catChips() + outListHtml();
-  }
-
-  function outListHtml() {
-    const rows = outItems();
-    if (!rows.length) return `<p class="muted">${outFilter === "all" ? (outQuery ? "Tidak ada item yang cocok." : "Tidak ada item di kategori ini.") : "Belum ada item di daftar ini."}</p>`;
-    const o = outDraft();
-    const groups = new Map();
-    for (const r of rows) {
-      if (!groups.has(r.group)) groups.set(r.group, []);
-      groups.get(r.group).push(r.it);
-    }
-    let html = "";
-    for (const [g, its] of groups) {
-      const filled = its.filter((it) => num(o.q[it.id]) > 0).length;
-      html += `<div class="ogroup">${esc(g)} <span>${its.length} item${filled ? ` · ${filled} diisi` : ""}</span></div>${its.map(outRowHtml).join("")}`;
-    }
-    return html;
-  }
-
-  function outCounts() {
-    const o = outDraft();
-    const filled = Object.keys(o.q).filter((id) => num(o.q[id]) > 0);
-    return { filled: filled.length, picked: filled.filter((id) => o.picked[id]).length };
-  }
-
-  function outHeadHtml() {
-    const h = d().head;
-    const c = outCounts();
-    const chip = (v, label) => `<button class="chip" data-of="${v}" aria-pressed="${outFilter === v}">${label}</button>`;
-    return `<div class="field"><span>Tujuan Outlet *</span><div class="chips">${data.opt.outlet.map((o) => `<button class="chip" data-hk="outlet" data-v="${esc(o)}" aria-pressed="${o === h.outlet}">${esc(o)}</button>`).join("")}</div></div>
-      <div class="whead">${field("Tgl Kirim Rencana *", inp("kirim", h.kirim, 'type="date"'))}${field("Rak Tujuan *", sel("rak", data.opt.rak, h.rak, "Pilih rak"))}</div>
-      <div class="otools">
-        <input class="search" data-k="oq" type="search" placeholder="Cari item" value="${esc(outQuery)}" autocomplete="off">
-        ${chip("all", "Semua")}${chip("filled", `Diisi (${c.filled})`)}${chip("todo", `Belum ✓ (${c.filled - c.picked})`)}
-        <button class="chip" data-hide0 aria-pressed="${hideZero}">Sembunyikan stok 0</button>
-      </div>`;
-  }
-
-  function renderCountsOnly() {
-    const tools = $("whead").querySelector(".otools");
-    if (tools) {
-      const c = outCounts();
-      tools.querySelector('[data-of="filled"]').textContent = `Diisi (${c.filled})`;
-      tools.querySelector('[data-of="todo"]').textContent = `Belum ✓ (${c.filled - c.picked})`;
-    }
-    updateBar();
-  }
-
-  function renderOutRows() {
-    $("wrows").innerHTML = outSheetHtml();
-    const tools = $("whead").querySelector(".otools");
-    if (tools) {
-      const c = outCounts();
-      tools.querySelector('[data-of="filled"]').textContent = `Diisi (${c.filled})`;
-      tools.querySelector('[data-of="todo"]').textContent = `Belum ✓ (${c.filled - c.picked})`;
-    }
-    updateBar();
-  }
-
-  function refreshOutRow(id) {
-    const el = $("wrows").querySelector(`.orow[data-oi="${id}"]`);
-    const it = itemById(id);
-    if (!el || !it) return;
-    const tmp = document.createElement("div");
-    tmp.innerHTML = outRowHtml(it);
-    const fresh = tmp.firstElementChild;
-    el.className = fresh.className;
-    el.querySelector(".oalloc").innerHTML = fresh.querySelector(".oalloc").innerHTML;
-    el.querySelector("[data-pick]").setAttribute("aria-pressed", fresh.querySelector("[data-pick]").getAttribute("aria-pressed"));
-  }
-
-  // ---------- render ----------
+  // ---------- small builders ----------
   const sel = (k, options, value, ph) => `<select class="num" data-k="${k}"><option value="">${esc(ph)}</option>${options.map((o) => `<option ${o === value ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
   const field = (label, inner, cls = "") => `<label class="field ${cls}"><span>${label}</span>${inner}</label>`;
   const inp = (k, v, attrs = "") => `<input class="num" data-k="${k}" value="${esc(v ?? "")}" ${attrs}>`;
-
-  function headHtml() {
-    if (mode === "out") return outHeadHtml();
-    const h = d().head;
-    if (mode === "in") return `<div class="whead">${field("PO / Surat Jalan *", inp("po", h.po, 'style="text-align:left" placeholder="No PO"'), "w2")}${field("Arrival Date *", inp("arrival", h.arrival, 'type="date"'))}</div>`;
-    if (mode === "out") return `<div class="field"><span>Tujuan Outlet *</span><div class="chips">${data.opt.outlet.map((o) => `<button class="chip" data-hk="outlet" data-v="${esc(o)}" aria-pressed="${o === h.outlet}">${esc(o)}</button>`).join("")}</div></div><div class="whead">${field("Tgl Kirim Rencana *", inp("kirim", h.kirim, 'type="date"'))}${field("Rak Tujuan *", sel("rak", data.opt.rak, h.rak, "Pilih rak"))}</div><p class="muted">Stok masuk ke Area Outbond, lalu dipotong otomatis jam 23:30 pada Tgl Kirim.</p>`;
-    if (mode === "waste") return `<div class="field"><span>Type *</span><div class="chips">${data.opt.type.map((o) => `<button class="chip" data-hk="type" data-v="${esc(o)}" aria-pressed="${o === h.type}">${esc(o.trim())}</button>`).join("")}</div></div><div class="whead">${field("Tanggal *", inp("date", h.date, 'type="date"'))}${field("Tgl Kirim *", inp("kirim", h.kirim, 'type="date"'))}</div>${h.type.trim() === "Kirim" ? `<div class="field"><span>Destination *</span><div class="chips">${data.opt.dest.map((o) => `<button class="chip" data-hk="dest" data-v="${esc(o)}" aria-pressed="${o === h.dest}">${esc(o)}</button>`).join("")}</div></div>` : ""}`;
-    return `<p class="muted">Pindah stok dari batch lama ke rak/level baru. Batch diambil otomatis sesuai FIFO.</p>`;
-  }
 
   // Options split into "belongs to this item" (⭐, first) and the rest, like a filtered picker.
   function grouped(k, mine, all, value, ph, mineLabel) {
@@ -307,83 +203,170 @@ export function createWms(ctx) {
     const body = own.length ? `<optgroup label="${esc(mineLabel)}">${own.map(opt).join("")}</optgroup><optgroup label="Lainnya">${rest.map(opt).join("")}</optgroup>` : all.map(opt).join("");
     return `<select class="num" data-k="${k}"><option value="">${esc(ph)}</option>${body}</select>`;
   }
+  const rakSelect = (it, x) => grouped("rak", homeOf(it).induks, data.opt.rak, x.rak, "Rak", "⭐ Rak seharusnya");
+  const levelSelect = (it, x) => grouped("level", x.rak ? homeOf(it).levelsIn(x.rak) : [], data.opt.level, x.level, "-", "⭐ Level item ini");
+  const photoBtn = (x) => `<label class="field"><span>Foto</span><span class="photo ${x.photo ? "ok" : ""}">${x.photo ? "✓" : x.uploading ? "…" : "📷"}<input type="file" accept="image/*" capture="environment" data-k="photo" hidden></span></label>`;
 
-  function rakSelect(r) {
-    const it = itemById(r.item);
-    return grouped("rak", it ? homeOf(it).induks : [], data.opt.rak, r.rak, "Rak", "⭐ Rak seharusnya");
+  // ---------- header (each mode's own fields) ----------
+  function headHtml() {
+    const h = d().head;
+    const chips = (k, list, value, label = (o) => o) => `<div class="chips">${list.map((o) => `<button class="chip" data-hk="${k}" data-v="${esc(o)}" aria-pressed="${o === value}">${esc(label(o))}</button>`).join("")}</div>`;
+    if (mode === "in") return `<div class="whead">${field("PO / Surat Jalan *", inp("po", h.po, 'style="text-align:left" placeholder="No PO"'), "w2")}${field("Arrival Date *", inp("arrival", h.arrival, 'type="date"'))}</div>`;
+    if (mode === "out") return `<div class="field"><span>Tujuan Outlet *</span>${chips("outlet", data.opt.outlet, h.outlet)}</div><div class="whead">${field("Tgl Kirim Rencana *", inp("kirim", h.kirim, 'type="date"'))}${field("Rak Tujuan *", sel("rak", data.opt.rak, h.rak, "Pilih rak"))}</div><p class="muted">Stok masuk ke Area Outbond, lalu dipotong otomatis jam 23:30 pada Tgl Kirim.</p>`;
+    if (mode === "waste") return `<div class="field"><span>Type *</span>${chips("type", data.opt.type, h.type, (o) => o.trim())}</div><div class="whead">${field("Tanggal *", inp("date", h.date, 'type="date"'))}${field("Tgl Kirim *", inp("kirim", h.kirim, 'type="date"'))}</div>${h.type.trim() === "Kirim" ? `<div class="field"><span>Destination *</span>${chips("dest", data.opt.dest, h.dest)}</div>` : ""}`;
+    return `<p class="muted">Pindah stok dari batch lama ke rak/level baru. Batch diambil otomatis sesuai FIFO.</p>`;
   }
 
-  function levelSelect(r) {
-    const it = itemById(r.item);
-    return grouped("level", it && r.rak ? homeOf(it).levelsIn(r.rak) : [], data.opt.level, r.level, "-", "⭐ Level item ini");
+  // ---------- pinned toolbar: search, filters, category chips ----------
+  function toolbarHtml() {
+    const c = counts();
+    const chip = (v, label) => `<button class="chip" data-of="${v}" aria-pressed="${filter === v}">${label}</button>`;
+    return `<div class="otop">
+      <input class="search" data-k="q" type="search" placeholder="🔍 Cari item / kode" value="${esc(query)}" autocomplete="off" enterkeyhint="search">
+      <div class="orow-chips">${chip("all", "Semua")}${chip("filled", `Diisi (${c.filled})`)}${mode === "out" ? chip("todo", `Belum ✓ (${c.filled - c.picked})`) : ""}${needsStock() ? `<button class="chip" data-hide0 aria-pressed="${hideZero}">Sembunyikan stok 0</button>` : ""}</div>
+      <div class="ocats">${["all", ...categories()].map((k) => `<button class="chip" data-cat="${esc(k)}" aria-pressed="${cat === k}">${k === "all" ? "Semua kategori" : esc(k.length > 26 ? `${k.slice(0, 24)}…` : k)}</button>`).join("")}</div>
+    </div>`;
   }
 
-  // Batch Sumber: only this item's batches with stock, oldest (FIFO) first.
-  function batchSelect(r) {
-    if (!r.item) return `<select class="num" data-k="batch" disabled><option>Pilih item dulu</option></select>`;
-    const list = fifo(r.item);
-    if (!list.length) return `<select class="num" data-k="batch" disabled><option>Tidak ada batch</option></select>`;
-    const auto = `<option value="">Auto FIFO (#${esc(list[0].no)}${list.length > 1 ? " +" : ""})</option>`;
-    return `<select class="num" data-k="batch">${auto}${list.map((b, n) => `<option value="${b.id}" ${b.id === r.batch ? "selected" : ""}>${n === 0 ? "⭐ " : ""}#${esc(b.no)} · ${esc(b.pos)} · sisa ${fmt(b.sisa)}${b.exp ? ` · exp ${esc(b.exp)}` : ""}</option>`).join("")}</select>`;
+  function updateCounts() {
+    const c = counts();
+    const t = $("wrows").querySelector(".otop");
+    if (!t) return;
+    const f = t.querySelector('[data-of="filled"]');
+    if (f) f.textContent = `Diisi (${c.filled})`;
+    const td = t.querySelector('[data-of="todo"]');
+    if (td) td.textContent = `Belum ✓ (${c.filled - c.picked})`;
   }
 
-  function rowHtml(r, i) {
-    const it = itemById(r.item);
-    const unit = it ? it.unit : "";
-    const pick = `<label class="field pick c4"><span>Item *</span><input class="num" style="text-align:left" data-k="find" placeholder="Cari nama / kode" autocomplete="off" value="${esc(it ? it.name : r.find || "")}"><div class="menu" hidden></div></label>`;
-    const qty = field(`Qty${unit ? ` (${esc(unit)})` : ""} *`, inp("qty", r.qty, 'inputmode="decimal"'), "c2");
-    const rak = field("Rak", rakSelect(r), "c3");
-    const lvl = field("Level", levelSelect(r), "c1");
-    let cells = "";
-    if (mode === "in") cells = pick + qty + rak + lvl + field("Expired", inp("exp", r.exp, 'type="date"'), "c2") + `<label class="field c2 wtemp"><span>Simpan sementara</span><input type="checkbox" class="chk" data-k="temp" ${r.temp ? "checked" : ""}></label>` + photoBtn(r);
-    if (mode === "tr") cells = pick + qty + field("Batch asal", batchSelect(r), "c3") + rak + lvl;
-    if (mode === "out") cells = pick + qty + field("Batch asal", batchSelect(r), "c4");
-    if (mode === "waste") cells = pick + qty + field("Batch", batchSelect(r), "c4") + photoBtn(r);
-    return `<div class="wrow" data-i="${i}">${cells}<button class="x" data-del aria-label="Hapus baris">×</button><div class="rowinfo">${hint(r)}</div></div>`;
+  // ---------- item rows ----------
+  function locHtml(it) {
+    const x = d().x[it.id] || {};
+    if (mode === "in") {
+      const home = homeOf(it);
+      const where = home.list.map((r) => r.name).join(", ");
+      return where ? `⭐ Rak seharusnya: ${esc(where)}` : '<span class="muted">Belum ada posisi rak di Master Items</span>';
+    }
+    const list = fifo(it.id);
+    const pick = x.batch ? list.find((b) => b.id === x.batch) : list[0];
+    if (!pick) return '<span class="danger">Tidak ada batch bersisa</span>';
+    return `<button class="oloc" data-loc>${x.batch ? "" : "⭐ "}#${esc(pick.no)} · ${esc(pick.pos)} · sisa ${fmt(pick.sisa)}${pick.exp ? ` · exp ${esc(pick.exp)}` : ""} ▾</button>`;
   }
 
-  function photoBtn(r) {
-    return `<label class="field c1"><span>Foto</span><span class="photo ${r.photo ? "ok" : ""}">${r.photo ? "✓" : r.uploading ? "…" : "📷"}<input type="file" accept="image/*" capture="environment" data-k="photo" hidden></span></label>`;
+  function batchPicker(it) {
+    const list = fifo(it.id);
+    const x = d().x[it.id] || {};
+    if (open !== it.id || !list.length) return "";
+    return `<select class="num obatch" data-k="batch"><option value="">Auto FIFO (#${esc(list[0].no)}${list.length > 1 ? " +" : ""})</option>${list.map((b, n) => `<option value="${b.id}" ${b.id === x.batch ? "selected" : ""}>${n === 0 ? "⭐ " : ""}#${esc(b.no)} · ${esc(b.pos)} · sisa ${fmt(b.sisa)}${b.exp ? ` · exp ${esc(b.exp)}` : ""}</option>`).join("")}</select>`;
   }
 
-  function hint(r) {
-    const it = itemById(r.item);
-    if (!it) return "Pilih item";
+  // Fields that only appear once a qty is filled, different per mode.
+  function extrasHtml(it) {
+    if (!(num(d().q[it.id]) > 0)) return "";
+    const x = xOf(it.id);
+    if (mode === "in") {
+      return `<div class="oext">${field("Rak", rakSelect(it, x))}${field("Level", levelSelect(it, x))}${field("Expired", inp("exp", x.exp, 'type="date"'))}<label class="field"><span>Simpan sementara</span><input type="checkbox" class="chk" data-k="temp" ${x.temp ? "checked" : ""}></label>${photoBtn(x)}</div>`;
+    }
+    if (mode === "tr") return `<div class="oext">${field("Rak tujuan *", rakSelect(it, x))}${field("Level *", levelSelect(it, x))}</div>`;
+    if (mode === "waste") return `<div class="oext">${photoBtn(x)}</div>`;
+    return "";
+  }
+
+  function hintHtml(it) {
+    const r = rowOf(it.id);
     const bits = [];
     if (mode === "in" || mode === "tr") {
-      const home = homeOf(it);
-      if (home.induks.length) bits.push(`Rak seharusnya: ${esc(home.induks.join(", "))}${r.rak && !home.induks.includes(r.rak) ? ' <span class="danger">(beda rak)</span>' : ""}`);
-      const cap = r.rak ? capacity(it.id, r.rak) : "";
-      if (cap) bits.push(`Kapasitas: ${esc(cap)}`);
+      if (num(r.qty) > 0) {
+        const home = homeOf(it);
+        if (r.rak && home.induks.length && !home.induks.includes(r.rak)) bits.push('<span class="danger">beda dari rak seharusnya</span>');
+        const cap = r.rak ? capacity(it.id, r.rak) : "";
+        if (cap) bits.push(`Kapasitas: ${esc(cap)}`);
+      }
     }
-    if (mode === "in" && !r.exp && /raw materials/i.test(it.cat)) bits.push('<span class="danger">Raw Materials: WAJIB isi Expired Date</span>');
-    if (mode !== "in") {
+    if (mode === "in" && num(r.qty) > 0 && !r.exp && /raw materials/i.test(it.cat)) bits.push('<span class="danger">Raw Materials: WAJIB isi Expired Date</span>');
+    if (needsStock() && num(r.qty) > 0) {
       const a = allocate(r);
-      const first = fifo(it.id)[0];
-      if (!num(r.qty)) bits.push(first ? `FIFO: #${esc(first.no)} · ${esc(first.pos)} · sisa ${fmt(first.sisa)} ${esc(it.unit)}` : '<span class="danger">Tidak ada batch bersisa untuk item ini</span>');
-      else if (a.none) bits.push('<span class="danger">Tidak ada batch bersisa untuk item ini — tidak bisa disimpan</span>');
+      if (a.none) bits.push('<span class="danger">Tidak bisa disimpan: tidak ada batch</span>');
       else {
-        bits.push(`Ambil: ${a.parts.map((p) => `#${esc(p.b.no)} ${esc(p.b.pos)} → ${fmt(p.q)}`).join(" + ")}`);
-        if (a.notFifo) bits.push('<span class="danger">BUKAN FIFO — ada batch lebih tua</span>');
-        if (a.short > 0) bits.push(`<span class="danger">Stok kurang ${fmt(a.short)} ${esc(it.unit)} — batch akan MINUS</span>`);
+        bits.push(`Ambil ${a.parts.map((p) => `<b>${fmt(p.q)}</b> dari #${esc(p.b.no)} (${esc(p.b.pos)})`).join(" + ")}`);
+        if (a.notFifo) bits.push('<span class="danger">BUKAN FIFO</span>');
+        if (a.short > 0) bits.push(`<span class="danger">kurang ${fmt(a.short)} → MINUS</span>`);
       }
     }
     return bits.join(" · ");
   }
 
-  function render() {
-    $("wmodes").innerHTML = MODES.map((m) => `<button class="chip" data-mode="${m.id}" aria-pressed="${m.id === mode}">${m.icon} ${m.label}</button>`).join("");
-    if (!loaded) return;
-    $("whead").innerHTML = headHtml();
-    $("wrows").innerHTML = mode === "out" ? outSheetHtml() : d().rows.map(rowHtml).join("");
-    $("wadd").hidden = mode === "out";
-    $("winfo").textContent = `${data.items.length} item · ${data.batches.length} batch bersisa · dimuat ${new Date(data.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
+  function rowHtml(it) {
+    const dr = d();
+    const qty = num(dr.q[it.id]);
+    const stock = fifo(it.id).reduce((t, b) => t + b.sisa, 0);
+    const zero = needsStock() && !stock && !(qty > 0);
+    const cls = `orow${mode === "out" ? "" : " nopick"}${qty > 0 ? " filled" : ""}${dr.picked[it.id] ? " picked" : ""}${zero ? " zero" : ""}`;
+    return `<div class="${cls}" data-oi="${it.id}">
+      ${mode === "out" ? `<button class="opick" data-pick aria-label="Sudah diambil ${esc(it.name)}" aria-pressed="${Boolean(dr.picked[it.id])}">✓</button>` : ""}
+      <div class="oinfo"><b>${esc(it.name)}</b> <span class="muted">${esc(it.code)} · stok ${fmt(stock)} ${esc(it.unit)}</span>
+        <div class="oplace">${locHtml(it)}</div>${batchPicker(it)}
+        <div class="oextwrap">${extrasHtml(it)}</div>
+        <div class="oalloc">${hintHtml(it)}</div></div>
+      <label class="oqty"><input class="num" data-k="qty" inputmode="decimal" enterkeyhint="next" value="${esc(dr.q[it.id] ?? "")}" aria-label="Qty ${esc(it.name)}" ${zero ? "disabled" : ""}><span>${esc(it.unit)}</span></label>
+    </div>`;
+  }
+
+  function listHtml() {
+    const items = listItems();
+    if (!items.length) return `<p class="muted">${filter !== "all" ? "Belum ada item di daftar ini." : query ? "Tidak ada item yang cocok." : "Tidak ada item di kategori ini."}</p>`;
+    const dr = d();
+    const groups = new Map();
+    for (const it of items) {
+      const g = catOf(it);
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(it);
+    }
+    let html = "";
+    for (const [g, its] of groups) {
+      const filled = its.filter((it) => num(dr.q[it.id]) > 0).length;
+      html += `<div class="ogroup">${esc(g)} <span>${its.length} item${filled ? ` · ${filled} diisi` : ""}</span></div>${its.map(rowHtml).join("")}`;
+    }
+    return html;
+  }
+
+  function renderList() {
+    const el = $("wrows").querySelector(".olist");
+    if (el) el.innerHTML = listHtml();
+    updateCounts();
     updateBar();
   }
 
-  function refreshRow(i) {
-    const el = $("wrows").querySelector(`.wrow[data-i="${i}"]`);
-    if (el) el.querySelector(".rowinfo").innerHTML = hint(d().rows[i]);
+  // Update one row in place, keeping focus in its qty box while typing.
+  function refreshRow(id, { extras = false } = {}) {
+    const el = $("wrows").querySelector(`.orow[data-oi="${id}"]`);
+    const it = itemById(id);
+    if (!el || !it) return;
+    const tmp = document.createElement("div");
+    tmp.innerHTML = rowHtml(it);
+    const f = tmp.firstElementChild;
+    el.className = f.className;
+    el.querySelector(".oalloc").innerHTML = f.querySelector(".oalloc").innerHTML;
+    el.querySelector(".oplace").innerHTML = f.querySelector(".oplace").innerHTML;
+    const pick = el.querySelector("[data-pick]");
+    if (pick) pick.setAttribute("aria-pressed", f.querySelector("[data-pick]").getAttribute("aria-pressed"));
+    const wrap = el.querySelector(".oextwrap");
+    if (extras || !wrap.innerHTML !== !f.querySelector(".oextwrap").innerHTML) wrap.innerHTML = f.querySelector(".oextwrap").innerHTML;
+    const group = [...$("wrows").querySelectorAll(".ogroup")].find((g) => g.firstChild.textContent.trim() === catOf(it));
+    if (group) {
+      const its = listItems().filter((x) => catOf(x) === catOf(it));
+      const filled = its.filter((x) => num(d().q[x.id]) > 0).length;
+      group.querySelector("span").textContent = `${its.length} item${filled ? ` · ${filled} diisi` : ""}`;
+    }
+  }
+
+  function render() {
+    $("wmodes").innerHTML = MODES.map((m) => `<button class="chip" data-mode="${m.id}" aria-pressed="${m.id === mode}">${m.icon} ${m.label}</button>`).join("");
+    $("wadd").hidden = true;
+    if (!loaded) return;
+    $("whead").innerHTML = headHtml();
+    $("wrows").innerHTML = `${toolbarHtml()}<div class="olist">${listHtml()}</div>`;
+    $("winfo").textContent = `${data.items.length} item · ${data.batches.length} batch bersisa · dimuat ${new Date(data.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
+    updateBar();
   }
 
   // ---------- events ----------
@@ -392,140 +375,119 @@ export function createWms(ctx) {
     if (!b) return;
     mode = b.dataset.mode;
     store.set("gik.wms.mode", mode);
+    query = "";
+    filter = "all";
+    open = "";
     render();
   });
   $("wreload").addEventListener("click", () => load(true));
-  $("wadd").addEventListener("click", () => { d().rows.push({}); save(); render(); $("wrows").querySelector(".wrow:last-child [data-k=find]")?.focus(); });
 
   $("whead").addEventListener("click", (e) => {
-    const f = e.target.closest("[data-of]");
-    if (f) { outFilter = f.dataset.of; $("whead").querySelectorAll("[data-of]").forEach((x) => x.setAttribute("aria-pressed", String(x === f))); return renderOutRows(); }
-    const h0 = e.target.closest("[data-hide0]");
-    if (h0) { hideZero = !hideZero; store.set("gik.wms.hide0", hideZero); h0.setAttribute("aria-pressed", String(hideZero)); return renderOutRows(); }
     const b = e.target.closest("[data-hk]");
     if (!b) return;
     d().head[b.dataset.hk] = b.dataset.v;
     save();
-    render();
+    $("whead").innerHTML = headHtml();
+    updateBar();
   });
   $("whead").addEventListener("input", (e) => {
     const k = e.target.dataset.k;
     if (!k) return;
-    if (k === "oq") { outQuery = e.target.value; return renderOutRows(); }
     d().head[k] = e.target.value;
     save();
     updateBar();
   });
 
   $("wrows").addEventListener("input", async (e) => {
-    if (mode === "out") {
-      const orow = e.target.closest(".orow");
-      if (!orow) return;
-      const id = orow.dataset.oi;
-      const o = outDraft();
-      if (e.target.dataset.k === "oqty") {
-        o.q[id] = e.target.value.replace(",", ".");
-        if (!(num(o.q[id]) > 0)) { delete o.q[id]; delete o.picked[id]; }
-      } else if (e.target.dataset.k === "obatch") {
-        if (e.target.value) o.b[id] = e.target.value; else delete o.b[id];
+    const k = e.target.dataset.k;
+    if (k === "q") { query = e.target.value; return renderList(); }
+    const row = e.target.closest(".orow");
+    if (!row) return;
+    const id = row.dataset.oi;
+    const it = itemById(id);
+    const dr = d();
+    const x = xOf(id);
+    if (k === "qty") {
+      const had = num(dr.q[id]) > 0;
+      dr.q[id] = e.target.value.replace(",", ".");
+      if (!(num(dr.q[id]) > 0)) { delete dr.q[id]; delete dr.picked[id]; }
+      // First qty for an item: default rak/level to where the item belongs.
+      if (!had && num(dr.q[id]) > 0 && (mode === "in" || mode === "tr") && !x.rak) {
+        const home = homeOf(it);
+        if (home.induks.length) { x.rak = home.induks[0]; x.level = home.levelFor(x.rak); }
       }
       save();
-      refreshOutRow(id);
+      refreshRow(id);
+      updateCounts();
       updateBar();
       return;
     }
-    const row = e.target.closest(".wrow");
-    if (!row) return;
-    const i = +row.dataset.i;
-    const r = d().rows[i];
-    const k = e.target.dataset.k;
-    if (k === "find") {
-      r.find = e.target.value;
-      r.item = "";
-      const q = e.target.value.trim().toLowerCase();
-      const menu = row.querySelector(".menu");
-      const hits = q ? data.items.filter((it) => `${it.name} ${it.code}`.toLowerCase().includes(q)).slice(0, 8) : [];
-      menu.innerHTML = hits.map((it) => `<button type="button" data-item="${it.id}"><b>${esc(it.name)}</b> <span class="muted">${esc(it.code)} · ${esc(it.unit)}</span></button>`).join("");
-      menu.hidden = !hits.length;
-    } else if (k === "photo") {
+    if (k === "photo") {
       const file = e.target.files?.[0];
       if (!file) return;
-      r.uploading = true;
-      render();
+      x.uploading = true;
+      refreshRow(id, { extras: true });
       try {
-        r.photo = await uploadPhoto(file, "wms");
+        x.photo = await uploadPhoto(file, "wms");
       } catch (err) {
         status(`Foto gagal diupload: ${esc(err.message)}`);
       }
-      r.uploading = false;
-      save();
-      render();
-      return;
+      x.uploading = false;
     } else if (k === "temp") {
-      r.temp = e.target.checked;
-    } else {
-      r[k] = e.target.value.replace(",", ".");
+      x.temp = e.target.checked;
+    } else if (k === "batch") {
+      if (e.target.value) x.batch = e.target.value; else delete x.batch;
+    } else if (k) {
+      x[k] = e.target.value;
       if (k === "rak") {
-        // Item's own rak: take its level there; level list is re-grouped for the new rak.
-        const it = itemById(r.item);
-        const home = it ? homeOf(it).levelFor(r.rak) : "";
-        if (home) r.level = home;
-        row.querySelector('[data-k="level"]').outerHTML = levelSelect(r);
+        const home = homeOf(it).levelFor(x.rak);
+        if (home) x.level = home;
+        save();
+        return refreshRow(id, { extras: true });
       }
     }
     save();
-    refreshRow(i);
+    refreshRow(id, { extras: k === "photo" });
     updateBar();
   });
 
   $("wrows").addEventListener("click", (e) => {
-    if (mode === "out") {
-      const cat = e.target.closest("[data-cat]");
-      if (cat) {
-        outCat = cat.dataset.cat;
-        renderOutRows();
-        $("wrows").querySelector(".ocats").scrollIntoView({ block: "start" });
-        $("wrows").querySelector('.ocats [aria-pressed="true"]')?.scrollIntoView({ inline: "center", block: "nearest" });
-        return;
-      }
-      const orow = e.target.closest(".orow");
-      if (!orow) return;
-      const id = orow.dataset.oi;
-      const o = outDraft();
-      if (e.target.closest("[data-pick]")) {
-        if (!(num(o.q[id]) > 0)) return orow.querySelector('[data-k="oqty"]').focus();
-        if (o.picked[id]) delete o.picked[id]; else o.picked[id] = true;
-        save();
-        if (outFilter === "todo") renderOutRows(); else { refreshOutRow(id); renderCountsOnly(); }
-      } else if (e.target.closest("[data-loc]")) {
-        outOpen = outOpen === id ? "" : id;
-        renderOutRows();
-      }
+    const of = e.target.closest("[data-of]");
+    if (of) {
+      filter = of.dataset.of;
+      $("wrows").querySelectorAll("[data-of]").forEach((b) => b.setAttribute("aria-pressed", String(b === of)));
+      return renderList();
+    }
+    const h0 = e.target.closest("[data-hide0]");
+    if (h0) {
+      hideZero = !hideZero;
+      store.set("gik.wms.hide0", hideZero);
+      h0.setAttribute("aria-pressed", String(hideZero));
+      return renderList();
+    }
+    const c = e.target.closest("[data-cat]");
+    if (c) {
+      cat = c.dataset.cat;
+      $("wrows").querySelectorAll("[data-cat]").forEach((b) => b.setAttribute("aria-pressed", String(b === c)));
+      c.scrollIntoView({ inline: "center", block: "nearest" });
+      renderList();
+      $("wrows").querySelector(".otop").scrollIntoView({ block: "start" });
       return;
     }
-    const row = e.target.closest(".wrow");
+    const row = e.target.closest(".orow");
     if (!row) return;
-    const i = +row.dataset.i;
-    const pickBtn = e.target.closest("[data-item]");
-    if (pickBtn) {
-      const it = itemById(pickBtn.dataset.item);
-      const r = d().rows[i];
-      Object.assign(r, { item: it.id, find: "", batch: "" });
-      if (mode === "in" || mode === "tr") {
-        const home = homeOf(it);
-        if (home.induks.length === 1 || (home.induks.length && !r.rak)) {
-          r.rak = home.induks[0];
-          r.level = home.levelFor(r.rak);
-        }
-      }
+    const id = row.dataset.oi;
+    const dr = d();
+    if (e.target.closest("[data-pick]")) {
+      if (!(num(dr.q[id]) > 0)) return row.querySelector('[data-k="qty"]').focus();
+      if (dr.picked[id]) delete dr.picked[id]; else dr.picked[id] = true;
       save();
-      render();
-      $("wrows").querySelector(`.wrow[data-i="${i}"] [data-k="qty"]`)?.focus();
-    } else if (e.target.closest("[data-del]")) {
-      d().rows.splice(i, 1);
-      if (!d().rows.length) d().rows.push({});
-      save();
-      render();
+      if (filter === "todo") renderList(); else { refreshRow(id); updateCounts(); updateBar(); }
+    } else if (e.target.closest("[data-loc]")) {
+      open = open === id ? "" : id;
+      const tmp = document.createElement("div");
+      tmp.innerHTML = rowHtml(itemById(id));
+      row.replaceWith(tmp.firstElementChild);
     }
   });
 
@@ -533,24 +495,21 @@ export function createWms(ctx) {
   function problems() {
     const h = d().head;
     const out = [];
-    const rows = mode === "out"
-      ? Object.entries(outDraft().q).filter(([, q]) => num(q) > 0).map(([item, qty]) => ({ item, qty, batch: outDraft().b[item] || "" }))
-      : d().rows.filter((r) => r.item || r.qty);
-    if (!rows.length) out.push(mode === "out" ? "Isi qty item yang dikirim" : "Belum ada baris");
+    const rows = Object.keys(d().q).filter((id) => num(d().q[id]) > 0 && itemById(id)).map(rowOf);
+    if (!rows.length) out.push("Isi qty di item yang mau disimpan");
     if (mode === "in" && !h.po?.trim()) out.push("Isi PO / Surat Jalan");
     if (mode === "in" && !h.arrival) out.push("Isi Arrival Date");
     if (mode === "out" && !h.outlet) out.push("Pilih Tujuan Outlet");
     if (mode === "out" && (!h.kirim || !h.rak)) out.push("Isi Tgl Kirim dan Rak Tujuan");
     if (mode === "waste" && (!h.type || !h.date || !h.kirim)) out.push("Isi Type, Tanggal dan Tgl Kirim");
     if (mode === "waste" && h.type?.trim() === "Kirim" && !h.dest) out.push("Pilih Destination");
-    rows.forEach((r, n) => {
-      if (!r.item) out.push(`Baris ${n + 1}: pilih item`);
-      else if (!(num(r.qty) > 0)) out.push(`Baris ${n + 1}: isi Qty`);
-      else if (mode !== "in" && allocate(r).none) out.push(`Baris ${n + 1}: tidak ada batch bersisa`);
-      if (mode === "tr" && r.item && (!r.rak || !r.level)) out.push(`Baris ${n + 1}: pilih Rak dan Level tujuan`);
-      if (r.uploading) out.push(`Baris ${n + 1}: foto masih diupload`);
-    });
-    return { rows: rows.filter((r) => r.item && num(r.qty) > 0), out };
+    for (const r of rows) {
+      const name = itemById(r.item).name;
+      if (needsStock() && allocate(r).none) out.push(`${name}: tidak ada batch bersisa`);
+      if (mode === "tr" && (!r.rak || !r.level)) out.push(`${name}: pilih Rak dan Level tujuan`);
+      if (r.uploading) out.push(`${name}: foto masih diupload`);
+    }
+    return { rows, out };
   }
 
   function records() {
@@ -585,8 +544,8 @@ export function createWms(ctx) {
     if (!loaded) return { html: "Memuat data WMS…", label: "Simpan", disabled: true };
     const p = problems();
     const label = { in: "Simpan Inbound", tr: "Simpan Transfer", out: "Simpan Outbond", waste: `Simpan ${(d().head.type || "").trim() || "Kirim/Rusak"}` }[mode];
-    const c = mode === "out" ? outCounts() : null;
-    const ready = mode === "out" ? `<b>${c.filled}</b> item · ✓ ${c.picked}/${c.filled} diambil · ${records().length} baris` : `<b>${p.rows.length}</b> item siap · ${records().length} baris ke WMS`;
+    const c = counts();
+    const ready = `<b>${c.filled}</b> item${mode === "out" ? ` · ✓ ${c.picked}/${c.filled} diambil` : ""} · ${records().length} baris ke WMS`;
     const html = p.out.length ? `<span class="danger">${esc(p.out[0])}${p.out.length > 1 ? ` (+${p.out.length - 1})` : ""}</span>` : ready;
     return { html, label, disabled: p.out.length > 0 };
   }
@@ -595,13 +554,12 @@ export function createWms(ctx) {
     const h = d().head;
     const lines = problems().rows.map((r) => {
       const it = itemById(r.item);
-      const a = mode === "in" ? null : allocate(r);
-      const where = mode === "in" ? `${r.rak || "-"}${r.level ? ` L${r.level}` : ""}` : a.parts.map((p) => `#${p.b.no}`).join("+");
+      const where = mode === "in" ? `${r.rak || "-"}${r.level ? ` L${r.level}` : ""}${r.exp ? ` · exp ${r.exp}` : ""}` : allocate(r).parts.map((p) => `#${p.b.no}`).join("+");
       return `${esc(it.name)}: ${fmt(num(r.qty))} ${esc(it.unit)} · ${esc(where)}${mode === "tr" ? ` → ${esc(r.rak)} L${esc(r.level)}` : ""}`;
     });
     const title = { in: `Inbound · PO ${h.po}`, tr: "Transfer rak", out: `Outbond → ${h.outlet} · kirim ${h.kirim}`, waste: `${(h.type || "").trim()}${h.dest ? ` → ${h.dest}` : ""}` }[mode];
-    const c = mode === "out" ? outCounts() : null;
-    const warn = c && c.picked < c.filled ? ` (${c.filled - c.picked} item belum ✓ diambil)` : "";
+    const c = counts();
+    const warn = mode === "out" && c.picked < c.filled ? ` (${c.filled - c.picked} item belum ✓ diambil)` : "";
     return { title: `Simpan ${title}?${warn}`, lines };
   }
 
@@ -611,7 +569,9 @@ export function createWms(ctx) {
     for (let i = 0; i < recs.length; i += 400) await base(table, "create", { records: recs.slice(i, i + 400).map((fields) => ({ fields })) });
     const label = MODES.find((m) => m.id === mode).label;
     drafts[mode] = fresh(mode);
-    if (mode === "out") { outFilter = "all"; outQuery = ""; outOpen = ""; outCat = "all"; }
+    filter = "all";
+    query = "";
+    open = "";
     save();
     status(`✅ ${label}: ${recs.length} baris tersimpan di WMS.`, "ok");
     render();
