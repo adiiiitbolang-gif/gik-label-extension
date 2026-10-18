@@ -89,7 +89,11 @@ export function createWms(ctx) {
   // Same source as the form hints "Rak Tujuan Seharusnya" / "Level Seharusnya".
   function homeOf(it) {
     const list = it.racks.map((id) => data.racks.get(id)).filter(Boolean);
-    return { induks: [...new Set(list.map((r) => r.induk).filter(Boolean))], levelFor: (induk) => list.find((r) => r.induk === induk)?.level || "" };
+    return {
+      induks: [...new Set(list.map((r) => r.induk).filter(Boolean))],
+      levelFor: (induk) => list.find((r) => r.induk === induk)?.level || "",
+      levelsIn: (induk) => [...new Set(list.filter((r) => r.induk === induk).map((r) => r.level).filter(Boolean))],
+    };
   }
 
   // Same as form hint "Kapasitas Level".
@@ -136,9 +140,32 @@ export function createWms(ctx) {
     return `<p class="muted">Pindah stok dari batch lama ke rak/level baru. Batch diambil otomatis sesuai FIFO.</p>`;
   }
 
+  // Options split into "belongs to this item" (⭐, first) and the rest, like a filtered picker.
+  function grouped(k, mine, all, value, ph, mineLabel) {
+    const opt = (o) => `<option ${o === value ? "selected" : ""}>${esc(o)}</option>`;
+    const own = mine.filter((o) => all.includes(o));
+    const rest = all.filter((o) => !own.includes(o));
+    const body = own.length ? `<optgroup label="${esc(mineLabel)}">${own.map(opt).join("")}</optgroup><optgroup label="Lainnya">${rest.map(opt).join("")}</optgroup>` : all.map(opt).join("");
+    return `<select class="num" data-k="${k}"><option value="">${esc(ph)}</option>${body}</select>`;
+  }
+
+  function rakSelect(r) {
+    const it = itemById(r.item);
+    return grouped("rak", it ? homeOf(it).induks : [], data.opt.rak, r.rak, "Rak", "⭐ Rak seharusnya");
+  }
+
+  function levelSelect(r) {
+    const it = itemById(r.item);
+    return grouped("level", it && r.rak ? homeOf(it).levelsIn(r.rak) : [], data.opt.level, r.level, "-", "⭐ Level item ini");
+  }
+
+  // Batch Sumber: only this item's batches with stock, oldest (FIFO) first.
   function batchSelect(r) {
+    if (!r.item) return `<select class="num" data-k="batch" disabled><option>Pilih item dulu</option></select>`;
     const list = fifo(r.item);
-    return sel("batch", [], "", "Auto FIFO").replace("</select>", `${list.map((b) => `<option value="${b.id}" ${b.id === r.batch ? "selected" : ""}>#${esc(b.no)} · ${esc(b.pos)} · sisa ${fmt(b.sisa)}${b.exp ? ` · exp ${esc(b.exp)}` : ""}</option>`).join("")}</select>`);
+    if (!list.length) return `<select class="num" data-k="batch" disabled><option>Tidak ada batch</option></select>`;
+    const auto = `<option value="">Auto FIFO (#${esc(list[0].no)}${list.length > 1 ? " +" : ""})</option>`;
+    return `<select class="num" data-k="batch">${auto}${list.map((b, n) => `<option value="${b.id}" ${b.id === r.batch ? "selected" : ""}>${n === 0 ? "⭐ " : ""}#${esc(b.no)} · ${esc(b.pos)} · sisa ${fmt(b.sisa)}${b.exp ? ` · exp ${esc(b.exp)}` : ""}</option>`).join("")}</select>`;
   }
 
   function rowHtml(r, i) {
@@ -146,8 +173,8 @@ export function createWms(ctx) {
     const unit = it ? it.unit : "";
     const pick = `<label class="field pick c4"><span>Item *</span><input class="num" style="text-align:left" data-k="find" placeholder="Cari nama / kode" autocomplete="off" value="${esc(it ? it.name : r.find || "")}"><div class="menu" hidden></div></label>`;
     const qty = field(`Qty${unit ? ` (${esc(unit)})` : ""} *`, inp("qty", r.qty, 'inputmode="decimal"'), "c2");
-    const rak = field("Rak", sel("rak", data.opt.rak, r.rak, "Rak"), "c3");
-    const lvl = field("Level", sel("level", data.opt.level, r.level, "-"), "c1");
+    const rak = field("Rak", rakSelect(r), "c3");
+    const lvl = field("Level", levelSelect(r), "c1");
     let cells = "";
     if (mode === "in") cells = pick + qty + rak + lvl + field("Expired", inp("exp", r.exp, 'type="date"'), "c2") + `<label class="field c2 wtemp"><span>Simpan sementara</span><input type="checkbox" class="chk" data-k="temp" ${r.temp ? "checked" : ""}></label>` + photoBtn(r);
     if (mode === "tr") cells = pick + qty + field("Batch asal", batchSelect(r), "c3") + rak + lvl;
@@ -257,10 +284,12 @@ export function createWms(ctx) {
       r.temp = e.target.checked;
     } else {
       r[k] = e.target.value.replace(",", ".");
-      if (k === "rak" && mode !== "out") {
+      if (k === "rak") {
+        // Item's own rak: take its level there; level list is re-grouped for the new rak.
         const it = itemById(r.item);
-        if (it && !r.level) r.level = homeOf(it).levelFor(r.rak);
-        if (r.level) row.querySelector('[data-k="level"]').value = r.level;
+        const home = it ? homeOf(it).levelFor(r.rak) : "";
+        if (home) r.level = home;
+        row.querySelector('[data-k="level"]').outerHTML = levelSelect(r);
       }
     }
     save();
