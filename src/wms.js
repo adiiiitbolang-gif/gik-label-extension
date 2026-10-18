@@ -36,13 +36,13 @@ export function createWms(ctx) {
   let mode = store.get("gik.wms.mode", "in");
   let loaded = false;
   let loading = null;
-  const data = { items: [], racks: new Map(), limits: [], batches: [], opt: { rak: [], level: [], outlet: [], type: [], dest: [] }, at: 0 };
+  const data = { items: [], racks: new Map(), pos: new Map(), limits: [], batches: [], opt: { rak: [], level: [], outlet: [], type: [], dest: [] }, at: 0 };
   const drafts = {};
   for (const m of MODES) drafts[m.id] = store.get(`gik.wms.${m.id}`, null) || fresh(m.id);
 
   function fresh(m) {
     if (m === "in") return { head: { po: "", arrival: today() }, rows: [{}] };
-    if (m === "out") return { head: { outlet: "", kirim: today(), rak: "Area Outbond" }, rows: [{}] };
+    if (m === "out") return { head: { outlet: "", kirim: today(), rak: "Area Outbond" }, rows: [{}], q: {}, picked: {}, b: {} };
     if (m === "waste") return { head: { type: "Rusak", date: today(), kirim: today(), dest: "" }, rows: [{}] };
     return { head: {}, rows: [{}] };
   }
@@ -57,13 +57,14 @@ export function createWms(ctx) {
       $("winfo").textContent = "Loading WMS data…";
       const [items, racks, limits, batches, fb, fd] = await Promise.all([
         searchAll("wmsItems", { field_names: ["Product Name", "Product Code", "Unit", "Category", "Rack Position"], automatic_fields: false }),
-        searchAll("wmsRacks", { field_names: ["Rack Name", "Rak Induk", "Level"], automatic_fields: false }),
+        searchAll("wmsRacks", { field_names: ["Rack Name", "Rak Induk", "Level", "Zone", "Lantai"], automatic_fields: false }),
         searchAll("wmsLimits", { field_names: ["Item", "Rak Induk Posisi", "Level Posisi", "Teks Sisa"], automatic_fields: false }),
         searchAll("wmsBatches", { view_id: ACTIVE_BATCH_VIEW, field_names: ["Batch No", "Item", "Kunci Item", "Kunci FIFO", "Sisa", "Posisi Tujuan", "Tgl Datang Teks", "Tgl Expired Teks"], automatic_fields: false }),
         base("wmsBatches", "fields", null, { page_size: 500 }),
         base("wmsDaily", "fields", null, { page_size: 500 }),
       ]);
-      data.racks = new Map(racks.map((r) => [r.record_id, { name: txt(r.fields["Rack Name"]), induk: txt(r.fields["Rak Induk"]), level: String(num(r.fields.Level) || "") }]));
+      data.racks = new Map(racks.map((r) => [r.record_id, { name: txt(r.fields["Rack Name"]), induk: txt(r.fields["Rak Induk"]), level: String(num(r.fields.Level) || ""), zone: txt(r.fields.Zone), lantai: txt(r.fields.Lantai) }]));
+      data.pos = new Map([...data.racks.values()].map((r) => [r.name, r]));
       data.items = items
         .map((r) => ({ id: r.record_id, name: txt(r.fields["Product Name"]), code: txt(r.fields["Product Code"]), unit: txt(r.fields.Unit), cat: txt(r.fields.Category), racks: linkIds(r.fields["Rack Position"]) }))
         .filter((i) => i.name)
@@ -127,12 +128,182 @@ export function createWms(ctx) {
     return { parts, short: left, none: false };
   }
 
+  // ---------- Outbond pick sheet ----------
+  // 20-30 items per outbond: every item with stock is already listed in walking order
+  // (Lt 2 -> Lt 1 dry -> chiller -> freezer), with its FIFO batch and position on the row.
+  // Staff type the qty, walk the route, tick ✓ when the right batch is in hand, then save once.
+  let outFilter = "all";
+  let outQuery = "";
+  let outOpen = "";
+  const ZONE_ORDER = ["Pallet", "Dry Storage", "Chiller", "Freezer", "Outbound"];
+  const outDraft = () => {
+    const o = drafts.out;
+    if (!o.q) Object.assign(o, { q: {}, picked: {}, b: {} });
+    return o;
+  };
+
+  function routeKey(it) {
+    const first = fifo(it.id)[0];
+    // Exact position from Master Racks, else any level of the same rak (same zone and floor).
+    const p = first ? data.pos.get(first.pos) || [...data.racks.values()].find((r) => r.induk && first.pos.startsWith(`${r.induk} `)) : null;
+    if (!p) return { key: `9|${it.name}`, group: first ? "Lainnya" : "Stok habis" };
+    const floor = p.lantai === "Lt 2" ? 0 : 1;
+    const zone = ZONE_ORDER.indexOf(p.zone);
+    return { key: `${floor}|${zone < 0 ? 8 : zone}|${p.induk}|${String(p.level).padStart(2, "0")}|${it.name}`, group: `${p.lantai || ""} · ${p.zone || "-"}` };
+  }
+
+  function outItems() {
+    const o = outDraft();
+    const q = outQuery.trim().toLowerCase();
+    return data.items
+      .filter((it) => fifo(it.id).length || num(o.q[it.id]) > 0)
+      .filter((it) => !q || `${it.name} ${it.code}`.toLowerCase().includes(q))
+      .filter((it) => outFilter === "all" || (num(o.q[it.id]) > 0 && (outFilter === "filled" || !o.picked[it.id])))
+      .map((it) => ({ it, ...routeKey(it) }))
+      .sort((a, b) => a.key.localeCompare(b.key));
+  }
+
+  function outAlloc(it) {
+    const o = outDraft();
+    return allocate({ item: it.id, qty: o.q[it.id], batch: o.b[it.id] || "" });
+  }
+
+  function outRowHtml(it) {
+    const o = outDraft();
+    const list = fifo(it.id);
+    const qty = num(o.q[it.id]);
+    const total = list.reduce((t, b) => t + b.sisa, 0);
+    const pick = o.b[it.id] ? list.find((b) => b.id === o.b[it.id]) : list[0];
+    const loc = pick ? `${o.b[it.id] ? "" : "⭐ "}#${esc(pick.no)} · ${esc(pick.pos)} · sisa ${fmt(pick.sisa)}${pick.exp ? ` · exp ${esc(pick.exp)}` : ""}` : '<span class="danger">Tidak ada batch bersisa</span>';
+    let alloc = "";
+    if (qty > 0) {
+      const a = outAlloc(it);
+      if (a.none) alloc = '<span class="danger">Tidak bisa disimpan: tidak ada batch</span>';
+      else {
+        alloc = `Ambil ${a.parts.map((p) => `<b>${fmt(p.q)}</b> dari #${esc(p.b.no)} (${esc(p.b.pos)})`).join(" + ")}`;
+        if (a.notFifo) alloc += ' · <span class="danger">BUKAN FIFO</span>';
+        if (a.short > 0) alloc += ` · <span class="danger">kurang ${fmt(a.short)} → MINUS</span>`;
+      }
+    }
+    const batchSel = outOpen === it.id && list.length
+      ? `<select class="num obatch" data-k="obatch"><option value="">Auto FIFO (#${esc(list[0].no)})</option>${list.map((b) => `<option value="${b.id}" ${b.id === o.b[it.id] ? "selected" : ""}>#${esc(b.no)} · ${esc(b.pos)} · sisa ${fmt(b.sisa)}${b.exp ? ` · exp ${esc(b.exp)}` : ""}</option>`).join("")}</select>`
+      : "";
+    return `<div class="orow${qty > 0 ? " filled" : ""}${o.picked[it.id] ? " picked" : ""}" data-oi="${it.id}">
+      <button class="opick" data-pick aria-label="Sudah diambil ${esc(it.name)}" aria-pressed="${Boolean(o.picked[it.id])}">✓</button>
+      <div class="oinfo"><b>${esc(it.name)}</b> <span class="muted">stok ${fmt(total)} ${esc(it.unit)}</span>
+        <button class="oloc" data-loc>${loc} ▾</button>${batchSel}
+        <div class="oalloc">${alloc}</div></div>
+      <label class="oqty"><input class="num" data-k="oqty" inputmode="decimal" enterkeyhint="next" value="${esc(o.q[it.id] ?? "")}" aria-label="Qty ${esc(it.name)}"><span>${esc(it.unit)}</span></label>
+    </div>`;
+  }
+
+  function outSheetHtml() {
+    const rows = outItems();
+    if (!rows.length) return `<p class="muted">${outFilter === "all" ? (outQuery ? "Tidak ada item yang cocok." : "Belum ada item dengan stok di WMS.") : "Belum ada item di daftar ini."}</p>`;
+    let html = "";
+    let group = null;
+    for (const r of rows) {
+      if (r.group !== group) {
+        group = r.group;
+        html += `<div class="ogroup">${esc(group)}</div>`;
+      }
+      html += outRowHtml(r.it);
+    }
+    return html;
+  }
+
+  function outCounts() {
+    const o = outDraft();
+    const filled = Object.keys(o.q).filter((id) => num(o.q[id]) > 0);
+    return { filled: filled.length, picked: filled.filter((id) => o.picked[id]).length };
+  }
+
+  function outHeadHtml() {
+    const h = d().head;
+    const c = outCounts();
+    const chip = (v, label) => `<button class="chip" data-of="${v}" aria-pressed="${outFilter === v}">${label}</button>`;
+    return `<div class="field"><span>Tujuan Outlet *</span><div class="chips">${data.opt.outlet.map((o) => `<button class="chip" data-hk="outlet" data-v="${esc(o)}" aria-pressed="${o === h.outlet}">${esc(o)}</button>`).join("")}</div></div>
+      <div class="whead">${field("Tgl Kirim Rencana *", inp("kirim", h.kirim, 'type="date"'))}${field("Rak Tujuan *", sel("rak", data.opt.rak, h.rak, "Pilih rak"))}</div>
+      <div class="otools">
+        <input class="search" data-k="oq" type="search" placeholder="Cari item" value="${esc(outQuery)}" autocomplete="off">
+        ${chip("all", "Semua")}${chip("filled", `Diisi (${c.filled})`)}${chip("todo", `Belum ✓ (${c.filled - c.picked})`)}
+        <button class="chip" data-copy ${h.outlet ? "" : "disabled"}>↺ Sama seperti kiriman terakhir</button>
+      </div>`;
+  }
+
+  function renderCountsOnly() {
+    const tools = $("whead").querySelector(".otools");
+    if (tools) {
+      const c = outCounts();
+      tools.querySelector('[data-of="filled"]').textContent = `Diisi (${c.filled})`;
+      tools.querySelector('[data-of="todo"]').textContent = `Belum ✓ (${c.filled - c.picked})`;
+    }
+    updateBar();
+  }
+
+  function renderOutRows() {
+    $("wrows").innerHTML = outSheetHtml();
+    const tools = $("whead").querySelector(".otools");
+    if (tools) {
+      const c = outCounts();
+      tools.querySelector('[data-of="filled"]').textContent = `Diisi (${c.filled})`;
+      tools.querySelector('[data-of="todo"]').textContent = `Belum ✓ (${c.filled - c.picked})`;
+    }
+    updateBar();
+  }
+
+  function refreshOutRow(id) {
+    const el = $("wrows").querySelector(`.orow[data-oi="${id}"]`);
+    const it = itemById(id);
+    if (!el || !it) return;
+    const tmp = document.createElement("div");
+    tmp.innerHTML = outRowHtml(it);
+    const fresh = tmp.firstElementChild;
+    el.className = fresh.className;
+    el.querySelector(".oalloc").innerHTML = fresh.querySelector(".oalloc").innerHTML;
+    el.querySelector("[data-pick]").setAttribute("aria-pressed", fresh.querySelector("[data-pick]").getAttribute("aria-pressed"));
+  }
+
+  // Copy the quantities of the latest outbond to this outlet (same Tgl Kirim Rencana), then staff adjust.
+  async function copyLast() {
+    const h = d().head;
+    if (!h.outlet) return;
+    status("Mengambil kiriman terakhir…");
+    try {
+      const res = await base("wmsBatches", "search", {
+        field_names: ["Item", "Qty Transfer", "Tgl Kirim Rencana"],
+        filter: { conjunction: "and", conditions: [{ field_name: "Tujuan Outlet", operator: "is", value: [h.outlet] }] },
+        sort: [{ field_name: "Waktu Input", desc: true }],
+        automatic_fields: false,
+      }, { page_size: 300 });
+      const rows = res.items || [];
+      if (!rows.length) return status(`Belum ada kiriman sebelumnya ke ${esc(h.outlet)}.`);
+      const day = num(rows[0].fields["Tgl Kirim Rencana"]);
+      const sums = {};
+      for (const r of rows.filter((x) => num(x.fields["Tgl Kirim Rencana"]) === day)) {
+        const id = linkIds(r.fields.Item)[0];
+        if (id) sums[id] = (sums[id] || 0) + num(r.fields["Qty Transfer"]);
+      }
+      const o = outDraft();
+      o.q = Object.fromEntries(Object.entries(sums).map(([k, v]) => [k, String(v)]));
+      o.picked = {};
+      o.b = {};
+      save();
+      outFilter = "filled";
+      render();
+      status(`Diisi dari kiriman ${new Date(day).toLocaleDateString("en-GB")} ke ${esc(h.outlet)}: ${Object.keys(sums).length} item. Ubah qty yang beda.`, "ok");
+    } catch (e) {
+      status(`Gagal mengambil kiriman terakhir: ${esc(e.message)}`);
+    }
+  }
+
   // ---------- render ----------
   const sel = (k, options, value, ph) => `<select class="num" data-k="${k}"><option value="">${esc(ph)}</option>${options.map((o) => `<option ${o === value ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
   const field = (label, inner, cls = "") => `<label class="field ${cls}"><span>${label}</span>${inner}</label>`;
   const inp = (k, v, attrs = "") => `<input class="num" data-k="${k}" value="${esc(v ?? "")}" ${attrs}>`;
 
   function headHtml() {
+    if (mode === "out") return outHeadHtml();
     const h = d().head;
     if (mode === "in") return `<div class="whead">${field("PO / Surat Jalan *", inp("po", h.po, 'style="text-align:left" placeholder="No PO"'), "w2")}${field("Arrival Date *", inp("arrival", h.arrival, 'type="date"'))}</div>`;
     if (mode === "out") return `<div class="field"><span>Tujuan Outlet *</span><div class="chips">${data.opt.outlet.map((o) => `<button class="chip" data-hk="outlet" data-v="${esc(o)}" aria-pressed="${o === h.outlet}">${esc(o)}</button>`).join("")}</div></div><div class="whead">${field("Tgl Kirim Rencana *", inp("kirim", h.kirim, 'type="date"'))}${field("Rak Tujuan *", sel("rak", data.opt.rak, h.rak, "Pilih rak"))}</div><p class="muted">Stok masuk ke Area Outbond, lalu dipotong otomatis jam 23:30 pada Tgl Kirim.</p>`;
@@ -216,7 +387,8 @@ export function createWms(ctx) {
     $("wmodes").innerHTML = MODES.map((m) => `<button class="chip" data-mode="${m.id}" aria-pressed="${m.id === mode}">${m.icon} ${m.label}</button>`).join("");
     if (!loaded) return;
     $("whead").innerHTML = headHtml();
-    $("wrows").innerHTML = d().rows.map(rowHtml).join("");
+    $("wrows").innerHTML = mode === "out" ? outSheetHtml() : d().rows.map(rowHtml).join("");
+    $("wadd").hidden = mode === "out";
     $("winfo").textContent = `${data.items.length} item · ${data.batches.length} batch bersisa · dimuat ${new Date(data.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
     updateBar();
   }
@@ -238,6 +410,9 @@ export function createWms(ctx) {
   $("wadd").addEventListener("click", () => { d().rows.push({}); save(); render(); $("wrows").querySelector(".wrow:last-child [data-k=find]")?.focus(); });
 
   $("whead").addEventListener("click", (e) => {
+    const f = e.target.closest("[data-of]");
+    if (f) { outFilter = f.dataset.of; $("whead").querySelectorAll("[data-of]").forEach((x) => x.setAttribute("aria-pressed", String(x === f))); return renderOutRows(); }
+    if (e.target.closest("[data-copy]")) return copyLast();
     const b = e.target.closest("[data-hk]");
     if (!b) return;
     d().head[b.dataset.hk] = b.dataset.v;
@@ -247,12 +422,29 @@ export function createWms(ctx) {
   $("whead").addEventListener("input", (e) => {
     const k = e.target.dataset.k;
     if (!k) return;
+    if (k === "oq") { outQuery = e.target.value; return renderOutRows(); }
     d().head[k] = e.target.value;
     save();
     updateBar();
   });
 
   $("wrows").addEventListener("input", async (e) => {
+    if (mode === "out") {
+      const orow = e.target.closest(".orow");
+      if (!orow) return;
+      const id = orow.dataset.oi;
+      const o = outDraft();
+      if (e.target.dataset.k === "oqty") {
+        o.q[id] = e.target.value.replace(",", ".");
+        if (!(num(o.q[id]) > 0)) { delete o.q[id]; delete o.picked[id]; }
+      } else if (e.target.dataset.k === "obatch") {
+        if (e.target.value) o.b[id] = e.target.value; else delete o.b[id];
+      }
+      save();
+      refreshOutRow(id);
+      updateBar();
+      return;
+    }
     const row = e.target.closest(".wrow");
     if (!row) return;
     const i = +row.dataset.i;
@@ -298,6 +490,22 @@ export function createWms(ctx) {
   });
 
   $("wrows").addEventListener("click", (e) => {
+    if (mode === "out") {
+      const orow = e.target.closest(".orow");
+      if (!orow) return;
+      const id = orow.dataset.oi;
+      const o = outDraft();
+      if (e.target.closest("[data-pick]")) {
+        if (!(num(o.q[id]) > 0)) return orow.querySelector('[data-k="oqty"]').focus();
+        if (o.picked[id]) delete o.picked[id]; else o.picked[id] = true;
+        save();
+        if (outFilter === "todo") renderOutRows(); else { refreshOutRow(id); renderCountsOnly(); }
+      } else if (e.target.closest("[data-loc]")) {
+        outOpen = outOpen === id ? "" : id;
+        renderOutRows();
+      }
+      return;
+    }
     const row = e.target.closest(".wrow");
     if (!row) return;
     const i = +row.dataset.i;
@@ -328,8 +536,10 @@ export function createWms(ctx) {
   function problems() {
     const h = d().head;
     const out = [];
-    const rows = d().rows.filter((r) => r.item || r.qty);
-    if (!rows.length) out.push("Belum ada baris");
+    const rows = mode === "out"
+      ? Object.entries(outDraft().q).filter(([, q]) => num(q) > 0).map(([item, qty]) => ({ item, qty, batch: outDraft().b[item] || "" }))
+      : d().rows.filter((r) => r.item || r.qty);
+    if (!rows.length) out.push(mode === "out" ? "Isi qty item yang dikirim" : "Belum ada baris");
     if (mode === "in" && !h.po?.trim()) out.push("Isi PO / Surat Jalan");
     if (mode === "in" && !h.arrival) out.push("Isi Arrival Date");
     if (mode === "out" && !h.outlet) out.push("Pilih Tujuan Outlet");
@@ -378,7 +588,9 @@ export function createWms(ctx) {
     if (!loaded) return { html: "Memuat data WMS…", label: "Simpan", disabled: true };
     const p = problems();
     const label = { in: "Simpan Inbound", tr: "Simpan Transfer", out: "Simpan Outbond", waste: `Simpan ${(d().head.type || "").trim() || "Kirim/Rusak"}` }[mode];
-    const html = p.out.length ? `<span class="danger">${esc(p.out[0])}${p.out.length > 1 ? ` (+${p.out.length - 1})` : ""}</span>` : `<b>${p.rows.length}</b> item siap · ${records().length} baris ke WMS`;
+    const c = mode === "out" ? outCounts() : null;
+    const ready = mode === "out" ? `<b>${c.filled}</b> item · ✓ ${c.picked}/${c.filled} diambil · ${records().length} baris` : `<b>${p.rows.length}</b> item siap · ${records().length} baris ke WMS`;
+    const html = p.out.length ? `<span class="danger">${esc(p.out[0])}${p.out.length > 1 ? ` (+${p.out.length - 1})` : ""}</span>` : ready;
     return { html, label, disabled: p.out.length > 0 };
   }
 
@@ -391,7 +603,9 @@ export function createWms(ctx) {
       return `${esc(it.name)}: ${fmt(num(r.qty))} ${esc(it.unit)} · ${esc(where)}${mode === "tr" ? ` → ${esc(r.rak)} L${esc(r.level)}` : ""}`;
     });
     const title = { in: `Inbound · PO ${h.po}`, tr: "Transfer rak", out: `Outbond → ${h.outlet} · kirim ${h.kirim}`, waste: `${(h.type || "").trim()}${h.dest ? ` → ${h.dest}` : ""}` }[mode];
-    return { title: `Simpan ${title}?`, lines };
+    const c = mode === "out" ? outCounts() : null;
+    const warn = c && c.picked < c.filled ? ` (${c.filled - c.picked} item belum ✓ diambil)` : "";
+    return { title: `Simpan ${title}?${warn}`, lines };
   }
 
   async function submit() {
@@ -400,6 +614,7 @@ export function createWms(ctx) {
     for (let i = 0; i < recs.length; i += 400) await base(table, "create", { records: recs.slice(i, i + 400).map((fields) => ({ fields })) });
     const label = MODES.find((m) => m.id === mode).label;
     drafts[mode] = fresh(mode);
+    if (mode === "out") { outFilter = "all"; outQuery = ""; outOpen = ""; }
     save();
     status(`✅ ${label}: ${recs.length} baris tersimpan di WMS.`, "ok");
     render();
