@@ -20,10 +20,11 @@ const store = {
 };
 
 // ---------- sign-in ----------
-let sess = (() => { try { return JSON.parse(sessionStorage.getItem("gik.session") || "null"); } catch { return null; } })();
+// Kept on the device (not per tab) so opening the app from a link reuses the sign-in until the token expires.
+let sess = (() => { try { return JSON.parse(localStorage.getItem("gik.session") || "null"); } catch { return null; } })();
 function saveSess(s) {
   sess = s;
-  try { sessionStorage.setItem("gik.session", JSON.stringify(s)); } catch { /* fine */ }
+  try { localStorage.setItem("gik.session", JSON.stringify(s)); } catch { /* fine */ }
   $("who").textContent = s?.name || "";
 }
 
@@ -65,9 +66,8 @@ function signIn() {
 
 async function doSignIn() {
   if (sess?.token && Date.now() < sess.expires_at) return saveSess(sess);
-  if (sess?.refresh_token) {
-    try { return saveSess(await post("/api/refresh", sess)); } catch { /* fall through to a new sign-in */ }
-  }
+  // Renew silently from the saved sign-in (HttpOnly cookie) before asking Lark again.
+  try { return saveSess(await post("/api/refresh", {})); } catch { /* no saved sign-in: sign in below */ }
   const { appId } = await fetch("/api/config").then((r) => r.json());
   if (inLark) return saveSess(await post("/api/login", { code: await larkCode(appId) }));
   // Plain browser: Lark OAuth redirect.
@@ -78,6 +78,7 @@ async function doSignIn() {
     return saveSess(await post("/api/login", { code: q.get("code"), redirect_uri: back }));
   }
   const auth = new URL("https://accounts.larksuite.com/open-apis/authen/v1/authorize");
+  // offline_access gives a refresh token, so Lark's consent screen appears once per device, not every visit.
   auth.search = new URLSearchParams({ client_id: appId, redirect_uri: back, state: "gik", scope: `${SCOPES.join(" ")} offline_access` });
   location.href = auth.toString();
   await new Promise(() => {}); // leaving the page

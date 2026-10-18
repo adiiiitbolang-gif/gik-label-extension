@@ -32,8 +32,17 @@ const OPS = {
 let tenantCache = { token: "", exp: 0 };
 let ticketCache = { ticket: "", exp: 0 };
 
-const json = (data, status = 200) =>
-  new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+const json = (data, status = 200, extra = {}) =>
+  new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...extra } });
+
+// The refresh token lives in an HttpOnly cookie (page scripts can't read it), so a browser
+// sign-in is renewed silently instead of showing Lark's consent screen on every visit.
+const RT = "gik_rt";
+const readCookie = (request, name) => (request.headers.get("cookie") || "").split(/;\s*/).find((c) => c.startsWith(`${name}=`))?.slice(name.length + 1) || "";
+const rtCookie = (t) =>
+  t.refresh_token
+    ? `${RT}=${t.refresh_token}; Path=/api; HttpOnly; Secure; SameSite=Lax; Max-Age=${Math.max(60, (t.refresh_token_expires_in || 604800) - 300)}`
+    : `${RT}=; Path=/api; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
 
 async function larkJson(url, init) {
   const res = await fetch(url, init);
@@ -91,7 +100,7 @@ async function userInfo(token) {
 function session(t, u) {
   return {
     token: t.access_token,
-    refresh_token: t.refresh_token,
+    renewable: Boolean(t.refresh_token),
     expires_at: Date.now() + (t.expires_in - 120) * 1000,
     name: u?.name || u?.en_name || "",
     open_id: u?.open_id || "",
@@ -106,13 +115,19 @@ async function api(request, env, url) {
     // redirect_uri only for the browser sign-in; the in-Lark requestAccess code has none.
     const { code, redirect_uri } = await request.json();
     const t = await oauthToken(env, { grant_type: "authorization_code", code, ...(redirect_uri ? { redirect_uri } : {}) });
-    return json(session(t, await userInfo(t.access_token)));
+    return json(session(t, await userInfo(t.access_token)), 200, { "set-cookie": rtCookie(t) });
   }
 
   if (p === "/api/refresh" && request.method === "POST") {
-    const { refresh_token, name, open_id } = await request.json();
-    const t = await oauthToken(env, { grant_type: "refresh_token", refresh_token });
-    return json(session(t, { name, open_id }));
+    const refresh_token = readCookie(request, RT);
+    if (!refresh_token) return json({ code: 401, msg: "no saved sign-in" }, 401);
+    let t;
+    try {
+      t = await oauthToken(env, { grant_type: "refresh_token", refresh_token });
+    } catch (e) {
+      return json({ code: 401, msg: String(e.message || e) }, 401, { "set-cookie": rtCookie({}) });
+    }
+    return json(session(t, await userInfo(t.access_token)), 200, { "set-cookie": rtCookie(t) });
   }
 
   if (p === "/api/jsconfig") {
