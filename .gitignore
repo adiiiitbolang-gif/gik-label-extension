@@ -4,3 +4,5 @@ node_modules/
 .wrangler/
 worker/.wrangler/
 worker/.dev.vars
+*.ndjson
+*.manifest.json
