@@ -1,4 +1,5 @@
 import { esc } from "./labels.js";
+import { fmtQty, liveQty } from "./qty.js";
 
 // Fast WMS input (WMS WH Matchaman base), replacing the four Base forms.
 // Each mode writes exactly the fields its form writes, so every WMS formula and workflow
@@ -68,6 +69,17 @@ export function createWms(ctx) {
   const needsStock = () => mode !== "in";
 
   // ---------- data ----------
+  // Lark returns field settings 100 per page; Stock Batch has more than that.
+  async function allFields(table) {
+    const items = [];
+    let page_token = "";
+    do {
+      const r = await base(table, "fields", null, { page_size: 100, ...(page_token ? { page_token } : {}) });
+      items.push(...(r.items || []));
+      page_token = r.has_more ? r.page_token : "";
+    } while (page_token);
+    return { items };
+  }
   async function load(force = false) {
     if (loaded && !force) return;
     if (loading) return loading;
@@ -78,8 +90,8 @@ export function createWms(ctx) {
         searchAll("wmsRacks", { field_names: ["Rack Name", "Rak Induk", "Level", "Zone", "Lantai"], automatic_fields: false }),
         searchAll("wmsLimits", { field_names: ["Item", "Rak Induk Posisi", "Level Posisi", "Teks Sisa"], automatic_fields: false }),
         searchAll("wmsBatches", { view_id: ACTIVE_BATCH_VIEW, field_names: ["Batch No", "Item", "Kunci Item", "Kunci FIFO", "Sisa", "Posisi Tujuan", "Tgl Datang Teks", "Tgl Expired Teks"], automatic_fields: false }),
-        base("wmsBatches", "fields", null, { page_size: 500 }),
-        base("wmsDaily", "fields", null, { page_size: 500 }),
+        allFields("wmsBatches"),
+        allFields("wmsDaily"),
       ]);
       data.racks = new Map(racks.map((r) => [r.record_id, { name: txt(r.fields["Rack Name"]), induk: txt(r.fields["Rak Induk"]), level: String(num(r.fields.Level) || ""), zone: txt(r.fields.Zone), lantai: txt(r.fields.Lantai) }]));
       data.pos = new Map([...data.racks.values()].map((r) => [r.name, r]));
@@ -307,7 +319,7 @@ export function createWms(ctx) {
         <div class="oplace">${locHtml(it)}</div>${batchPicker(it)}
         <div class="oextwrap">${extrasHtml(it)}</div>
         <div class="oalloc">${hintHtml(it)}</div></div>
-      <label class="oqty"><input class="num" data-k="qty" inputmode="decimal" enterkeyhint="next" value="${esc(dr.q[it.id] ?? "")}" aria-label="Qty ${esc(it.name)}" ${zero ? "disabled" : ""}><span>${esc(it.unit)}</span></label>
+      <label class="oqty"><input class="num" data-k="qty" inputmode="decimal" enterkeyhint="next" value="${esc(fmtQty(dr.q[it.id]))}" aria-label="Qty ${esc(it.name)}" ${zero ? "disabled" : ""}><span>${esc(it.unit)}</span></label>
     </div>`;
   }
 
@@ -409,7 +421,7 @@ export function createWms(ctx) {
     const x = xOf(id);
     if (k === "qty") {
       const had = num(dr.q[id]) > 0;
-      dr.q[id] = e.target.value.replace(",", ".");
+      dr.q[id] = liveQty(e.target);
       if (!(num(dr.q[id]) > 0)) { delete dr.q[id]; delete dr.picked[id]; }
       // First qty for an item: default rak/level to where the item belongs.
       if (!had && num(dr.q[id]) > 0 && (mode === "in" || mode === "tr") && !x.rak) {
