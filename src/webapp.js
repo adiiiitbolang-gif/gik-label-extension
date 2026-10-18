@@ -1,6 +1,7 @@
 import { esc, encodeLine, parseLabelData, sheetHtml, injectLabelCss } from "./labels.js";
 import { drawLabel, canvasToFile } from "./labelImage.js";
 import { setupDirectPrint } from "./directPrint.js";
+import { createWms } from "./wms.js";
 
 // GIK Production web app: opened from Lark Workplace (phone/tablet) or a browser.
 // Writes go straight to the Production base with the signed-in user's own token (through the Worker),
@@ -143,6 +144,7 @@ function show(t) {
   $("bar").hidden = t === "labels" || t === "today";
   if (t === "labels") loadRecent();
   if (t === "today" && booted) loadDay();
+  if (t === "wms" && booted) wms.load().catch(() => {});
   updateBar();
 }
 document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => show(b.dataset.tab)));
@@ -430,10 +432,21 @@ function updateBar() {
     $("sum").innerHTML = outlet ? `<b>${rows.length}</b> product(s) · ${labels} label(s) → <b>${esc(outlet)}</b>` : `<span class="danger">Pick an outlet</span>`;
     $("submit").textContent = "Submit packing";
     $("submit").disabled = !rows.length || !outlet;
+  } else if (tab === "wms" && wms) {
+    const b = wms.bar();
+    $("sum").innerHTML = b.html;
+    $("submit").textContent = b.label;
+    $("submit").disabled = b.disabled;
   }
 }
 
 $("submit").addEventListener("click", () => {
+  if (tab === "wms") {
+    const s = wms.summary();
+    $("ctitle").textContent = s.title;
+    $("clist").innerHTML = s.lines.map((l) => `<li>${l}</li>`).join("");
+    return $("confirm").showModal();
+  }
   const lines = tab === "prod"
     ? prodRows().map((r) => { const d = draft[r.id]; return `${esc(r.name)}: ${fmt(num(d.b))} batch → ${fmt(num(d.q))} ${esc(r.unit)}${d.p ? ` · 🖨 ${num(d.c) || 1}` : ""}`; })
     : packRows().map((r) => { const it = items.find((x) => x.id === r.item); const c = rowCalc(r); return `${esc(it.name)}: ${c.count} × ${fmt(c.net)} ${esc(it.unit)}`; });
@@ -448,6 +461,7 @@ $("cyes").addEventListener("click", async () => {
   status("Saving…");
   try {
     if (tab === "prod") await submitProduction();
+    else if (tab === "wms") await wms.submit();
     else await submitPacking();
   } catch (e) {
     status(`Could not save: ${esc(e.message)}. Nothing was lost, try again.`);
@@ -702,6 +716,31 @@ const setTop = () => document.documentElement.style.setProperty("--toph", `${doc
 addEventListener("resize", setTop);
 setTop();
 
+// Photo -> Lark media token for an attachment field (resized so uploads stay quick on mobile data).
+async function uploadPhoto(file, which) {
+  if (!sess || Date.now() > sess.expires_at) await signIn();
+  let blob = file;
+  try {
+    const img = await createImageBitmap(file);
+    const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+    const c = document.createElement("canvas");
+    c.width = Math.round(img.width * scale);
+    c.height = Math.round(img.height * scale);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.8));
+  } catch { /* send the original */ }
+  const r = await fetch(`/api/upload?base=${which}&name=${encodeURIComponent((file.name || "foto").replace(/\.\w+$/, "") + ".jpg")}`, {
+    method: "POST",
+    headers: { "content-type": blob.type || "image/jpeg", "x-lark-token": sess.token },
+    body: blob,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (j.code !== 0 || !j.data?.file_token) throw new Error(j.msg || `HTTP ${r.status}`);
+  return j.data.file_token;
+}
+
+const wms = createWms({ $, base, searchAll, txt, num, fmt, store, status, uploadPhoto, updateBar: () => updateBar() });
+
 let booted = false;
 
 // ---------- start ----------
@@ -715,7 +754,7 @@ renderPacking();
     await signIn();
     booted = true;
     status("");
-    await Promise.all([loadRecipes(), loadItems(), loadBatches().then(renderPacking), tab === "today" ? loadDay() : null]);
+    await Promise.all([loadRecipes(), loadItems(), loadBatches().then(renderPacking), tab === "today" ? loadDay() : null, tab === "wms" ? wms.load() : null]);
   } catch (e) {
     status(`Sign-in or loading failed: ${esc(e.message)}. Open this app from Lark Workplace.`);
   }

@@ -10,4 +10,5 @@ run_worker_first = ["/api/*"]
 [vars]
 APP_ID = "cli_aa40d417d9b85ed3"
 BASE_TOKEN = "MUOCbW70laiT4hsmYIVlgLH1gCc"
+WMS_BASE_TOKEN = "YvW5bn3UdaycUDsKjFol4U56g4d"
 # APP_SECRET is set with: npx wrangler secret put APP_SECRET

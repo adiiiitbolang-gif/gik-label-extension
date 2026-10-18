@@ -73,6 +73,25 @@ main{max-width:1100px;margin:0 auto;padding:14px 16px 120px}
 select.num{text-align:left}
 .x{height:42px;width:40px;border:1px solid var(--line);border-radius:8px;background:var(--panel);cursor:pointer;font-size:18px}
 @media (max-width:720px){.krow{grid-template-columns:1fr 1fr 1fr}.krow .pick,.krow .kbatch{grid-column:1/-1}.krow .x{grid-column:3;justify-self:end}}
+/* gudang (WMS) */
+.wmodes{margin-bottom:10px}
+.wmodes .chip{height:42px;font-weight:600}
+.whead{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin-top:8px}
+.whead .w2{grid-column:span 2}
+.wrow{display:grid;grid-template-columns:repeat(12,minmax(0,1fr)) 40px;gap:8px;align-items:end;padding:10px 0;border-top:1px solid var(--line)}
+.wrow:first-child{border-top:0}
+.wrow .c1{grid-column:span 1}.wrow .c2{grid-column:span 2}.wrow .c3{grid-column:span 3}.wrow .c4{grid-column:span 4}
+.wrow .x{grid-column:13}
+.wrow .rowinfo{grid-column:1/-1}
+.wtemp{justify-items:start}
+.photo{display:grid;place-items:center;height:42px;border:1px dashed var(--line);border-radius:8px;cursor:pointer;font-size:18px}
+.photo.ok{border-style:solid;border-color:var(--accent);color:var(--accent);font-weight:700}
+@media (max-width:720px){
+  .wrow{grid-template-columns:repeat(6,minmax(0,1fr)) 40px}
+  .wrow .c4,.wrow .c3{grid-column:span 6}.wrow .c2{grid-column:span 3}.wrow .c1{grid-column:span 2}
+  .wrow .pick{grid-column:1/7}.wrow .x{grid-column:7;grid-row:1}
+  .whead .w2{grid-column:auto}
+}
 /* labels */
 .previews{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
 .previews canvas{width:200px;height:120px;border:1px solid var(--line);border-radius:4px;background:#fff}
@@ -142,6 +161,7 @@ dialog ul{padding-left:18px;margin:8px 0;max-height:50vh;overflow:auto}
     <button class="tab" role="tab" data-tab="today" aria-selected="true"><span class="ti">📊</span>Today</button>
     <button class="tab" role="tab" data-tab="prod" aria-selected="false"><span class="ti">🍳</span>Production</button>
     <button class="tab" role="tab" data-tab="pack" aria-selected="false"><span class="ti">📦</span>Packing</button>
+    <button class="tab" role="tab" data-tab="wms" aria-selected="false"><span class="ti">🏬</span>Gudang</button>
     <button class="tab" role="tab" data-tab="labels" aria-selected="false"><span class="ti">🖨</span>Labels</button>
   </nav>
 </header>
@@ -190,6 +210,17 @@ dialog ul{padding-left:18px;margin:8px 0;max-height:50vh;overflow:auto}
     <div class="toolbar">
       <button id="kadd" class="ghost">+ Add product</button>
       <label class="chip" style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="kprint" checked> Print labels</label>
+    </div>
+  </section>
+
+  <section id="v-wms" data-view="wms" hidden>
+    <div class="chips wmodes" id="wmodes"></div>
+    <div class="card" id="whead"></div>
+    <div class="card" id="wrows"></div>
+    <div class="toolbar">
+      <button id="wadd" class="ghost">+ Tambah item</button>
+      <button id="wreload" class="chip" aria-label="Muat ulang data WMS">↻ Data</button>
+      <span class="muted" id="winfo"></span>
     </div>
   </section>
 

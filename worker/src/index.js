@@ -8,13 +8,20 @@
 // so Lark keeps the real "Created By" and the user's Base permissions apply.
 const LARK = "https://open.larksuite.com/open-apis";
 
-// Only these tables and operations can be reached through the proxy.
+// Only these tables and operations can be reached through the proxy: [base, table].
+// "prod" = GIK Production Report base, "wms" = WMS WH Matchaman base.
 const TABLES = {
-  recipes: "tbl8MsZzJTYTGDEq",
-  items: "tblrr3ZSa5kuIDbI",
-  batches: "tblNKpqO2NH81eZ2",
-  packing: "tblCLOQlUrKzd3dU",
+  recipes: ["prod", "tbl8MsZzJTYTGDEq"],
+  items: ["prod", "tblrr3ZSa5kuIDbI"],
+  batches: ["prod", "tblNKpqO2NH81eZ2"],
+  packing: ["prod", "tblCLOQlUrKzd3dU"],
+  wmsItems: ["wms", "tblg4CdVNY6GtBfV"],
+  wmsRacks: ["wms", "tblb9pkG6hcxFv7r"],
+  wmsLimits: ["wms", "tbll0RfAs94v1dd1"],
+  wmsBatches: ["wms", "tbl4eXJZnqUOxzd8"],
+  wmsDaily: ["wms", "tblsAGZqPkPn0lOw"],
 };
+const baseToken = (env, which) => (which === "wms" ? env.WMS_BASE_TOKEN : env.BASE_TOKEN);
 const OPS = {
   search: { method: "POST", path: "records/search" },
   create: { method: "POST", path: "records/batch_create" },
@@ -117,6 +124,24 @@ async function api(request, env, url) {
     return json({ appId: env.APP_ID, timestamp, nonceStr, signature });
   }
 
+  // Photo for an attachment field: raw image body -> Lark media upload into that base.
+  if (p === "/api/upload" && request.method === "POST") {
+    const token = request.headers.get("x-lark-token");
+    if (!token) return json({ code: 401, msg: "not signed in" }, 401);
+    const which = url.searchParams.get("base") === "wms" ? "wms" : "prod";
+    const name = (url.searchParams.get("name") || "photo.jpg").replace(/[^\w.\- ]/g, "_").slice(0, 100);
+    const buf = await request.arrayBuffer();
+    if (buf.byteLength > 20 * 1024 * 1024) return json({ code: 413, msg: "file too large" }, 413);
+    const form = new FormData();
+    form.append("file_name", name);
+    form.append("parent_type", (request.headers.get("content-type") || "").startsWith("image/") ? "bitable_image" : "bitable_file");
+    form.append("parent_node", baseToken(env, which));
+    form.append("size", String(buf.byteLength));
+    form.append("file", new Blob([buf], { type: request.headers.get("content-type") || "application/octet-stream" }), name);
+    const { status, body } = await larkJson(`${LARK}/drive/v1/medias/upload_all`, { method: "POST", headers: { authorization: `Bearer ${token}` }, body: form });
+    return json(body, status === 200 && body.code === 0 ? 200 : status >= 400 ? status : 400);
+  }
+
   const m = p.match(/^\/api\/base\/(\w+)\/(\w+)$/);
   if (m) {
     const table = TABLES[m[1]];
@@ -126,7 +151,7 @@ async function api(request, env, url) {
     if (!token) return json({ code: 401, msg: "not signed in" }, 401);
     const qs = new URLSearchParams();
     for (const k of ["page_size", "page_token", "user_id_type"]) if (url.searchParams.has(k)) qs.set(k, url.searchParams.get(k));
-    const target = `${LARK}/bitable/v1/apps/${env.BASE_TOKEN}/tables/${table}/${op.path}${qs.size ? `?${qs}` : ""}`;
+    const target = `${LARK}/bitable/v1/apps/${baseToken(env, table[0])}/tables/${table[1]}/${op.path}${qs.size ? `?${qs}` : ""}`;
     const init = { method: op.method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json; charset=utf-8" } };
     if (op.method === "POST") init.body = await request.text();
     const { status, body } = await larkJson(target, init);
