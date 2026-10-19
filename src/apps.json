@@ -9,6 +9,7 @@
     { "id": "pack", "title": "Pengiriman", "desc": "FG & WIP ke outlet, label per container", "group": "input", "icon": "truck", "kind": "embed", "path": "app.html", "tab": "pack", "enabled": true },
     { "id": "repack", "title": "Repacking", "desc": "Kemas ulang item di CK atau Gudang", "group": "input", "icon": "box", "kind": "embed", "path": "app.html", "tab": "repack", "enabled": true },
     { "id": "wms", "title": "Gudang", "desc": "Inbound, transfer, outbond, kirim/rusak", "group": "input", "icon": "warehouse", "kind": "embed", "path": "app.html", "tab": "wms", "enabled": true },
+    { "id": "ck", "title": "Stok CK", "desc": "Stok Central Kitchen per batch", "group": "monitor", "icon": "fridge", "kind": "embed", "path": "app.html", "tab": "ck", "enabled": true },
     { "id": "today", "title": "Hari Ini", "desc": "Ringkasan produksi, packing & sisa", "group": "monitor", "icon": "chart", "kind": "embed", "path": "app.html", "tab": "today", "enabled": true },
     { "id": "labels", "title": "Label", "desc": "Cetak & cetak ulang label 50×30", "group": "monitor", "icon": "printer", "kind": "embed", "path": "app.html", "tab": "labels", "enabled": true },
     { "id": "wmsApp", "title": "WMS Matchaman", "desc": "BaseApp stok & dashboard gudang", "group": "base", "icon": "layout", "kind": "link", "url": "https://puyogroup.sg.larksuite.com/app/LF0ObbefDayHaQsS5EllHQFBghc", "enabled": true },

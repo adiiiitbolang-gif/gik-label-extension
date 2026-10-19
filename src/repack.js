@@ -12,7 +12,7 @@ export const LOCATIONS = ["Central Kitchen", "Gudang"];
 const PRODUCED = ["Finished Goods", "Work In Process"];
 export const isProduced = (it) => PRODUCED.includes(it?.cat);
 
-export function createRepack({ $, base, txt, num, fmt, store, status, wms, getItems, getBatches, loadBatches, openLabels, updateBar }) {
+export function createRepack({ $, base, txt, num, fmt, store, status, wms, ck, getItems, getBatches, loadBatches, openLabels, updateBar }) {
   let loc = LOCATIONS.includes(store.get("gik.repack.loc", "")) ? store.get("gik.repack.loc", "") : "";
   let rows = store.get("gik.repack", [{}]);
   const save = () => { store.set("gik.repack", rows); store.set("gik.repack.loc", loc); };
@@ -23,6 +23,11 @@ export function createRepack({ $, base, txt, num, fmt, store, status, wms, getIt
   // Source batches for one item: production batches (FG/WIP, newest first) or WMS stock batches (FIFO first).
   function sources(it) {
     if (!it) return [];
+    // At CK: only what CK still holds (received from the warehouse or made there), oldest first.
+    if (loc === "Central Kitchen") {
+      const unit = ck.item(it.code)?.unit || it.unit;
+      return ck.lots(it.code).map((x) => ({ id: x.id, lot: x.lot, date: x.date, exp: x.exp, storage: x.storage || "", left: x.left, hint: `sisa ${fmt(x.left)} ${unit} · ${x.from}` }));
+    }
     if (isProduced(it)) {
       return getBatches()
         .filter((b) => txt(b.fields["Product Code"]) === it.code)
@@ -41,7 +46,7 @@ export function createRepack({ $, base, txt, num, fmt, store, status, wms, getIt
 
   // Both sources can be needed in either place (a CK raw material has WMS batches, a WIP at Gudang has a production batch).
   async function load() {
-    await Promise.all([wms.load(), loadBatches()]);
+    await Promise.all([wms.load(), loadBatches(), loc === "Central Kitchen" ? ck.load(true) : null]);
     render();
   }
   const expOf = (r) => { const s = sourceOf(r); return isProduced(itemOf(r)) ? s?.exp || "" : String(r.exp ?? s?.exp ?? "").trim(); };
@@ -49,6 +54,7 @@ export function createRepack({ $, base, txt, num, fmt, store, status, wms, getIt
   function missing(r) {
     const it = itemOf(r);
     if (!it || !(packCalc(r.qty, r.split).total > 0)) return "";
+    if (loc === "Central Kitchen" && !sources(it).length) return "No stock of this item at CK (nothing received or made yet)";
     if (isProduced(it) && !sourceOf(r)) return "Pick the production batch (expiry comes from it)";
     if (!expOf(r)) return "Enter the expiry date";
     return "";
@@ -61,8 +67,10 @@ export function createRepack({ $, base, txt, num, fmt, store, status, wms, getIt
     if (!c.total) return `Enter the qty to repack in ${esc(it.unit)}`;
     const m = missing(r);
     if (m) return `<span class="danger">${esc(m)}</span>`;
+    const s = sourceOf(r);
+    const over = s?.left != null && c.total > s.left + 0.0001 ? ` · <span class="danger">more than batch has left (${fmt(s.left)})</span>` : "";
     const parts = c.last ? `${c.count - 1} × ${fmt(c.net)} + 1 × ${fmt(c.last)}` : `${c.count} × ${fmt(c.net)}`;
-    return `${parts} ${esc(it.unit)} = <b>${fmt(c.total)} ${esc(it.unit)}</b> · <b>${c.count}</b> label(s)`;
+    return `${parts} ${esc(it.unit)} = <b>${fmt(c.total)} ${esc(it.unit)}</b> · <b>${c.count}</b> label(s)${over}`;
   }
 
   function render() {

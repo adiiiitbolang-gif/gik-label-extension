@@ -69,6 +69,15 @@ main{max-width:1100px;margin:0 auto;padding:14px 16px 120px}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 .krow{display:grid;grid-template-columns:minmax(0,1fr) 84px 84px 84px minmax(0,150px) 40px;gap:8px;align-items:end;padding:10px 0;border-top:1px solid var(--line)}
 .krow:first-child{border-top:0}
+#ckfilter{margin-bottom:8px}
+.ckrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.ckrow .q{text-align:right;font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.ckrow .q small{font-size:12px;font-weight:600;color:var(--muted)}
+.ckrow .q.neg{color:var(--bad)}
+.ckrow .m{grid-column:1/-1;font-size:13px;color:var(--muted)}
+.ckrow ul{grid-column:1/-1;margin:2px 0 0;padding:0;list-style:none;display:grid;gap:2px;font-size:13px}
+.ckrow li{display:flex;justify-content:space-between;gap:8px}
+.ckrow li span:last-child{font-variant-numeric:tabular-nums;white-space:nowrap}
 .krow{grid-template-columns:minmax(0,1fr) 120px 160px minmax(0,180px) 40px}
 .seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:6px}
 .segb{height:42px;border:1px solid var(--line);border-radius:8px;background:var(--bg);font-weight:600;cursor:pointer}
@@ -252,6 +261,7 @@ dialog ul{padding-left:18px;margin:8px 0;max-height:50vh;overflow:auto}
     <button class="tab" role="tab" data-tab="pack" aria-selected="false"><span class="ti">🚚</span>Pengiriman</button>
     <button class="tab" role="tab" data-tab="repack" aria-selected="false"><span class="ti">📦</span>Repacking</button>
     <button class="tab" role="tab" data-tab="wms" aria-selected="false"><span class="ti">🏬</span>Gudang</button>
+    <button class="tab" role="tab" data-tab="ck" aria-selected="false"><span class="ti">🧊</span>Stok CK</button>
     <button class="tab" role="tab" data-tab="labels" aria-selected="false"><span class="ti">🖨</span>Labels</button>
   </nav>
 </header>
@@ -312,6 +322,16 @@ dialog ul{padding-left:18px;margin:8px 0;max-height:50vh;overflow:auto}
       <div class="card" id="rrows"></div>
       <div class="toolbar"><button id="radd" class="ghost">+ Add item</button></div>
     </div>
+  </section>
+
+  <section id="v-ck" data-view="ck" hidden>
+    <div class="toolbar">
+      <input id="cksearch" class="search" type="search" placeholder="Cari item / kode" autocomplete="off">
+      <button class="chip" id="ckreload" aria-label="Muat ulang">↻</button>
+    </div>
+    <div class="chips" id="ckfilter"></div>
+    <p class="muted" id="ckinfo"></p>
+    <div class="list" id="cklist"><p class="muted">Loading…</p></div>
   </section>
 
   <section id="v-wms" data-view="wms" hidden>

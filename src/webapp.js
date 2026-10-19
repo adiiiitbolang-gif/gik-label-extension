@@ -3,6 +3,7 @@ import { drawLabel, canvasToFile } from "./labelImage.js";
 import { setupDirectPrint } from "./directPrint.js";
 import { createWms } from "./wms.js";
 import { createRepack } from "./repack.js";
+import { createCkStock, CK_START } from "./ckstock.js";
 import { fmtQty, liveQty, packCalc } from "./qty.js";
 import { createSession, inLark, isMobile, embedded, openLink } from "./lark.js";
 
@@ -82,7 +83,7 @@ const num = (x) => parseFloat(txt(x)) || 0;
 const fmt = (n) => (Math.round(n * 100) / 100).toLocaleString("id-ID"); // 1.500 / 1,5 like the Base
 
 // ---------- tabs ----------
-const TABS = ["today", "prod", "pack", "repack", "wms", "labels"];
+const TABS = ["today", "prod", "pack", "repack", "wms", "ck", "labels"];
 const asked = new URLSearchParams(location.search).get("tab");
 let tab = TABS.includes(asked) ? asked : store.get("gik.tab", "today");
 // Inside the hub's viewer the viewer has the app switcher, so the app's own header and tab bar are hidden.
@@ -93,7 +94,8 @@ function show(t) {
   store.set("gik.tab", t);
   document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
   document.querySelectorAll("[data-view]").forEach((s) => (s.hidden = s.dataset.view !== t));
-  $("bar").hidden = t === "labels" || t === "today";
+  $("bar").hidden = t === "labels" || t === "today" || t === "ck";
+  if (t === "ck" && booted) loadCk();
   if (t === "repack" && booted) repack.load().catch(() => {});
   if (t === "labels") loadRecent();
   if (t === "today" && booted) loadDay();
@@ -602,6 +604,41 @@ $("v-labels").addEventListener("click", (e) => {
   if (rp) { const g = recentReps[+rp.dataset.r]; if (g) openLabels(repackData(g), `Repack · ${g.loc}`); }
 });
 
+// ---------- Stok CK ----------
+let ckFilter = "all";
+const CK_FILTERS = [["all", "Semua"], ["raw", "Raw material"], ["made", "WIP / FG"], ["neg", "Minus / cek"]];
+async function loadCk(force = true) {
+  $("cklist").innerHTML = `<p class="muted">Loading…</p>`;
+  try {
+    await ck.load(force);
+    renderCk();
+  } catch (e) {
+    $("cklist").innerHTML = `<p class="note">Could not load CK stock: ${esc(e.message)}</p>`;
+  }
+}
+function renderCk() {
+  $("ckfilter").innerHTML = CK_FILTERS.map(([k, t]) => `<button class="chip" data-f="${k}" aria-pressed="${k === ckFilter}">${t}</button>`).join("");
+  const q = $("cksearch").value.trim().toLowerCase();
+  const made = (e) => ["Finished Goods", "Work In Process"].includes(e.cat);
+  const list = [...ck.get().items.values()]
+    .filter((e) => e.inQty || e.used || e.sent)
+    .filter((e) => !q || `${e.code} ${e.name}`.toLowerCase().includes(q))
+    .filter((e) => ckFilter === "all" || (ckFilter === "made" ? made(e) : ckFilter === "raw" ? !made(e) : e.left < -0.0001 || e.warn || e.short > 0.0001))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  $("ckinfo").textContent = `Dihitung sejak ${new Date(CK_START).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}: masuk dari Outbond gudang (tujuan Central Kitchen) + hasil produksi, keluar lewat BOM produksi + pengiriman ke outlet.`;
+  $("cklist").innerHTML = list.length ? list.map((e) => {
+    const lots = e.lots.filter((x) => x.left > 0.0001);
+    return `<div class="ckrow"><div><b>${esc(e.name)}</b><div class="muted">${esc(e.code)}</div></div>
+      <div class="q${e.left < -0.0001 ? " neg" : ""}">${fmt(e.left)} <small>${esc(e.unit)}</small></div>
+      <div class="m">masuk ${fmt(e.inQty)} · pakai BOM ${fmt(e.used)} · kirim ${fmt(e.sent)}${e.warn ? ` · <span class="danger">${esc(e.warn)}</span>` : ""}${e.short > 0.0001 ? ` · <span class="danger">${fmt(e.short)} dipakai tanpa batch tercatat</span>` : ""}</div>
+      ${lots.length ? `<ul>${lots.map((x) => `<li><span>${esc(x.lot)} · exp ${esc(x.exp || "-")} <span class="muted">(${esc(x.from)})</span></span><span>${fmt(x.left)} ${esc(e.unit)}</span></li>`).join("")}</ul>` : ""}
+    </div>`;
+  }).join("") : `<p class="muted">${ck.get().at ? "Belum ada stok CK sejak tanggal mulai." : "Loading…"}</p>`;
+}
+$("ckfilter").addEventListener("click", (e) => { const b = e.target.closest("[data-f]"); if (b) { ckFilter = b.dataset.f; renderCk(); } });
+$("cksearch").addEventListener("input", renderCk);
+$("ckreload").addEventListener("click", () => loadCk(true));
+
 // ---------- today dashboard ----------
 let day = new Date();
 day.setHours(0, 0, 0, 0);
@@ -785,7 +822,8 @@ async function uploadPhoto(file, which) {
 }
 
 const wms = createWms({ $, base, searchAll, txt, num, fmt, store, status, uploadPhoto, updateBar: () => updateBar() });
-const repack = createRepack({ $, base, txt, num, fmt, store, status, wms, getItems: () => items, getBatches: () => batches, loadBatches, openLabels, updateBar: () => updateBar() });
+const ck = createCkStock({ searchAll, txt, num, getItems: () => items });
+const repack = createRepack({ $, base, txt, num, fmt, store, status, wms, ck, getItems: () => items, getBatches: () => batches, loadBatches, openLabels, updateBar: () => updateBar() });
 
 let booted = false;
 
@@ -800,7 +838,7 @@ renderPacking();
     await signIn();
     booted = true;
     status("");
-    await Promise.all([loadRecipes(), loadItems(), loadBatches().then(renderPacking), tab === "today" ? loadDay() : null, tab === "wms" ? wms.load() : null, tab === "repack" ? repack.load() : null]);
+    await Promise.all([loadRecipes(), loadItems(), loadBatches().then(renderPacking), tab === "today" ? loadDay() : null, tab === "wms" ? wms.load() : null, tab === "repack" ? repack.load() : null, tab === "ck" ? loadCk() : null]);
   } catch (e) {
     status(`Sign-in or loading failed: ${esc(e.message)}. Open this app from Lark Workplace.`);
   }
