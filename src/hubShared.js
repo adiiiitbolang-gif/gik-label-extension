@@ -5,6 +5,7 @@ export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&a
 // 24px stroke icons (currentColor).
 const PATHS = {
   pot: '<path d="M4 10h16v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z"/><path d="M2 10h20M9 6.5c0-1.2 1.2-1.3 1.2-2.5M13.8 6.5c0-1.2 1.2-1.3 1.2-2.5"/>',
+  truck: '<path d="M3 6h11v10H3zM14 9h4l3 3v4h-7"/><circle cx="7" cy="17.5" r="1.8"/><circle cx="17" cy="17.5" r="1.8"/>',
   box: '<path d="M21 7.5 12 3 3 7.5 12 12z"/><path d="M3 7.5v9L12 21l9-4.5v-9M12 12v9M7.5 5.2l9 4.6"/>',
   warehouse: '<path d="M3 21V8.5L12 3l9 5.5V21"/><path d="M7 21v-9h10v9M7 15h10M7 18h10"/>',
   chart: '<path d="M3 21h18"/><rect x="5" y="11" width="3" height="7" rx="1"/><rect x="10.5" y="6" width="3" height="12" rx="1"/><rect x="16" y="13" width="3" height="5" rx="1"/>',

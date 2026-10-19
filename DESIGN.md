@@ -26,7 +26,8 @@ biru `--i-input` = Input harian · ungu `--i-monitor` = Pantau & cetak · teal `
 
 ## Istilah input
 - **Produksi**: Std batches · Output (satuan) · **Labels** = jumlah label dicetak (kosong/0 = tidak cetak). Disimpan ke "Containers (labels)".
-- **Packing**: **Pack size** (isi per pack) × **Packs** (jumlah pack, kosong = 1) = **Total** (dihitung, tidak diketik). Satu label per pack. Ukuran berbeda = satu baris per ukuran. Disimpan ke Split / Labels / Qty.
+- **Pengiriman** (CK → outlet, hanya Finished Goods & WIP): **Qty to send** + **Per container** = label. FG pilih 5 atau 10 pcs; WIP bebas (gram), kosong = 1 container. Sisa yang tidak pas jadi 1 container lebih kecil dengan net sendiri di label terakhir (45 pcs @10 = 4×10 + 1×5). Disimpan ke Packing Lines: Qty + Split.
+- **Repacking** (pilih lokasi dulu: Central Kitchen atau Gudang; semua item): **Qty to repack** + **Per pack** (satuan item, gram atau pcs), sumber batch + expiry. CK = item & batch produksi; Gudang = item & batch WMS (FIFO). Stok tidak bergerak. Disimpan ke tabel Repack Lines (beserta Label Line untuk cetak ulang).
 
 ## Tipografi
 - Font sistem: `"Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif`. Tidak memuat font web (hemat data HP).

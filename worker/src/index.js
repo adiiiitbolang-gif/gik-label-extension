@@ -15,6 +15,7 @@ const TABLES = {
   items: ["prod", "tblrr3ZSa5kuIDbI"],
   batches: ["prod", "tblNKpqO2NH81eZ2"],
   packing: ["prod", "tblCLOQlUrKzd3dU"],
+  repack: ["prod", "tblcC0RUenqp0gge"],
   wmsItems: ["wms", "tblg4CdVNY6GtBfV"],
   wmsRacks: ["wms", "tblb9pkG6hcxFv7r"],
   wmsLimits: ["wms", "tbll0RfAs94v1dd1"],

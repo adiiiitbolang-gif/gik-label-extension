@@ -30,3 +30,15 @@ export function liveQty(input) {
   if (!int && !dec) return "";
   return dec ? `${int || "0"}.${dec}` : int;
 }
+
+// Qty + content per container -> labels. A smaller last container keeps its own net (lastNet on the last label).
+// Container empty (or >= qty) = everything in one container.
+export function packCalc(qty, split) {
+  const total = parseFloat(qty) || 0;
+  const size = parseFloat(split) || 0;
+  if (!(total > 0)) return { count: 0, net: 0, total: 0, last: 0 };
+  if (!(size > 0) || size >= total) return { count: 1, net: total, total, last: 0 };
+  const count = Math.ceil(total / size - 1e-9);
+  const last = Math.round((total - size * (count - 1)) * 1000) / 1000;
+  return { count, net: size, total, last: last < size ? last : 0 };
+}

@@ -592,5 +592,5 @@ export function createWms(ctx) {
   }
 
   render();
-  return { load, bar, summary, submit, render };
+  return { load, bar, summary, submit, render, data: () => data };
 }

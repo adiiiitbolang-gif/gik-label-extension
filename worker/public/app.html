@@ -69,6 +69,12 @@ main{max-width:1100px;margin:0 auto;padding:14px 16px 120px}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 .krow{display:grid;grid-template-columns:minmax(0,1fr) 84px 84px 84px minmax(0,150px) 40px;gap:8px;align-items:end;padding:10px 0;border-top:1px solid var(--line)}
 .krow:first-child{border-top:0}
+.krow{grid-template-columns:minmax(0,1fr) 120px 160px minmax(0,180px) 40px}
+.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:6px}
+.segb{height:42px;border:1px solid var(--line);border-radius:8px;background:var(--bg);font-weight:600;cursor:pointer}
+.segb[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.rrow{grid-template-columns:minmax(0,1fr) 110px 110px minmax(0,180px) 120px 40px}
+.rrow .kexp .num{font-size:15px}
 .krow .field>span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ktotal{display:flex;align-items:center;justify-content:flex-end;background:var(--soft);border-color:transparent;font-weight:700;white-space:nowrap;overflow:hidden}
 .pick{position:relative}
@@ -82,10 +88,13 @@ select.num{text-align:left}
 /* phone: product + remove on one line, Split · Labels · Qty below, then batch; each row is its own block */
 @media (max-width:720px){
   .krow{grid-template-columns:repeat(3,minmax(0,1fr)) 44px;grid-template-areas:"pick pick pick x" "split labels qty qty" "batch batch batch batch" "info info info info";gap:10px;align-items:end;padding:14px 0}
-  .krow .kpick{grid-area:pick}.krow .ksplit{grid-area:split}.krow .klabels{grid-area:labels}.krow .kqty{grid-area:qty}.krow .kbatch{grid-area:batch}.krow .rowinfo{grid-area:info}
+  .krow{grid-template-areas:"pick pick pick x" "qty qty split split" "batch batch batch batch" "info info info info"}
+  .rrow{grid-template-areas:"pick pick pick x" "qty qty split split" "batch batch batch batch" "exp exp exp exp" "info info info info"}
+  .krow .kpick{grid-area:pick}.krow .ksplit{grid-area:split}.krow .kqty{grid-area:qty}.krow .kbatch{grid-area:batch}.krow .kexp{grid-area:exp}.krow .rowinfo{grid-area:info}
   .krow .x{grid-area:x;width:44px;height:44px;justify-self:end}
   .krow .num{height:48px;font-size:16px}
   .krow .kqty .num{font-weight:600;font-size:17px}
+  .segb{height:48px;font-size:16px}
 }
 /* gudang (WMS) */
 .wmodes{margin-bottom:10px}
@@ -224,7 +233,8 @@ dialog ul{padding-left:18px;margin:8px 0;max-height:50vh;overflow:auto}
   <nav class="tabs" role="tablist">
     <button class="tab" role="tab" data-tab="today" aria-selected="true"><span class="ti">📊</span>Today</button>
     <button class="tab" role="tab" data-tab="prod" aria-selected="false"><span class="ti">🍳</span>Production</button>
-    <button class="tab" role="tab" data-tab="pack" aria-selected="false"><span class="ti">📦</span>Packing</button>
+    <button class="tab" role="tab" data-tab="pack" aria-selected="false"><span class="ti">🚚</span>Pengiriman</button>
+    <button class="tab" role="tab" data-tab="repack" aria-selected="false"><span class="ti">📦</span>Repacking</button>
     <button class="tab" role="tab" data-tab="wms" aria-selected="false"><span class="ti">🏬</span>Gudang</button>
     <button class="tab" role="tab" data-tab="labels" aria-selected="false"><span class="ti">🖨</span>Labels</button>
   </nav>
@@ -243,13 +253,13 @@ dialog ul{padding-left:18px;margin:8px 0;max-height:50vh;overflow:auto}
     </div>
     <div class="kpis" id="kpis"></div>
     <nav class="jump" id="jump">
-      <a href="#s-prod">Production</a><a href="#s-out">To outlets</a><a href="#s-ck">Repack (CK)</a><a href="#s-bal">Balance</a>
+      <a href="#s-prod">Production</a><a href="#s-out">Pengiriman</a><a href="#s-ck">Repacking</a><a href="#s-bal">Balance</a>
     </nav>
     <h2 id="s-prod">Production</h2>
     <div class="list" id="dprod"></div>
-    <h2 id="s-out">Packed to outlets</h2>
+    <h2 id="s-out">Pengiriman to outlets</h2>
     <div id="dout"></div>
-    <h2 id="s-ck">Repack · Central Kitchen</h2>
+    <h2 id="s-ck">Repacking</h2>
     <div id="dck"></div>
     <h2 id="s-bal">Balance · produced vs packed</h2>
     <div id="dbal"></div>
@@ -267,13 +277,24 @@ dialog ul{padding-left:18px;margin:8px 0;max-height:50vh;overflow:auto}
 
   <section id="v-pack" data-view="pack" hidden>
     <div class="card">
-      <div class="field"><span>Outlet</span><div class="chips" id="outlets"></div></div>
-      <p class="muted" id="cknote" hidden>Central Kitchen = internal repack, stock is not deducted.</p>
+      <div class="field"><span>Kirim ke outlet</span><div class="chips" id="outlets"></div></div>
+      <p class="muted">Finished goods & WIP only. FG: 5 or 10 pcs per container, the rest goes in one smaller container.</p>
     </div>
     <div class="card" id="krows"></div>
     <div class="toolbar">
-      <button id="kadd" class="ghost">+ Add product</button>
+      <button id="kadd" class="ghost">+ Add item</button>
       <label class="chip" style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="kprint" checked> Print labels</label>
+    </div>
+  </section>
+
+  <section id="v-repack" data-view="repack" hidden>
+    <div class="card">
+      <div class="field"><span>Lokasi repacking</span><div class="chips" id="rlocs"></div></div>
+      <p class="muted" id="rnote"></p>
+    </div>
+    <div id="rbody" hidden>
+      <div class="card" id="rrows"></div>
+      <div class="toolbar"><button id="radd" class="ghost">+ Add item</button></div>
     </div>
   </section>
 
@@ -304,8 +325,10 @@ dialog ul{padding-left:18px;margin:8px 0;max-height:50vh;overflow:auto}
     </div>
     <h2>Recent production</h2>
     <div class="list" id="recentB"><p class="muted">Loading…</p></div>
-    <h2>Recent packing</h2>
+    <h2>Recent pengiriman</h2>
     <div class="list" id="recentP"><p class="muted">Loading…</p></div>
+    <h2>Recent repacking</h2>
+    <div class="list" id="recentR"><p class="muted">Loading…</p></div>
   </section>
 </main>
 
@@ -323,6 +346,6 @@ dialog ul{padding-left:18px;margin:8px 0;max-height:50vh;overflow:auto}
 <div class="printsheet sheet" id="printsheet"></div>
 
 <script src="https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.34.js"></script>
-<script src="./webapp.js?v=1792425281"></script>
+<script src="./webapp.js?v=1792426763"></script>
 </body>
 </html>

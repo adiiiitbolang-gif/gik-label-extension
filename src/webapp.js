@@ -2,14 +2,16 @@ import { esc, encodeLine, parseLabelData, sheetHtml, injectLabelCss } from "./la
 import { drawLabel, canvasToFile } from "./labelImage.js";
 import { setupDirectPrint } from "./directPrint.js";
 import { createWms } from "./wms.js";
-import { fmtQty, liveQty } from "./qty.js";
+import { createRepack } from "./repack.js";
+import { fmtQty, liveQty, packCalc } from "./qty.js";
 import { createSession, inLark, isMobile, embedded, openLink } from "./lark.js";
 
 // GIK Production web app: opened from Lark Workplace (phone/tablet) or a browser.
 // Writes go straight to the Production base with the signed-in user's own token (through the Worker),
 // so no Base automation runs are used: labels are built and printed right here.
 const $ = (id) => document.getElementById(id);
-const OUTLETS = ["Central Kitchen", "MM Blok M", "MM PP", "MM Kokas", "MM CP", "MM PIM", "Peppino", "Maiku", "Lain2"];
+// Pengiriman goes out to these; Central Kitchen work is Repacking now.
+const OUTLETS = ["MM Blok M", "MM PP", "MM Kokas", "MM CP", "MM PIM", "Peppino", "Maiku", "Lain2"];
 
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
@@ -80,7 +82,7 @@ const num = (x) => parseFloat(txt(x)) || 0;
 const fmt = (n) => (Math.round(n * 100) / 100).toLocaleString("id-ID"); // 1.500 / 1,5 like the Base
 
 // ---------- tabs ----------
-const TABS = ["today", "prod", "pack", "wms", "labels"];
+const TABS = ["today", "prod", "pack", "repack", "wms", "labels"];
 const asked = new URLSearchParams(location.search).get("tab");
 let tab = TABS.includes(asked) ? asked : store.get("gik.tab", "today");
 // Inside the hub's viewer the viewer has the app switcher, so the app's own header and tab bar are hidden.
@@ -92,6 +94,7 @@ function show(t) {
   document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
   document.querySelectorAll("[data-view]").forEach((s) => (s.hidden = s.dataset.view !== t));
   $("bar").hidden = t === "labels" || t === "today";
+  if (t === "repack" && booted) repack.load().catch(() => {});
   if (t === "labels") loadRecent();
   if (t === "today" && booted) loadDay();
   if (t === "wms" && booted) wms.load().catch(() => {});
@@ -239,13 +242,20 @@ async function getRecords(table, ids) {
 // ---------- packing ----------
 let items = [];
 let batches = []; // recent production batches, for the optional batch pick
-let outlet = store.get("gik.outlet", "");
+let outlet = OUTLETS.includes(store.get("gik.outlet", "")) ? store.get("gik.outlet", "") : "";
 let krows = store.get("gik.pack", [{}]);
+// Drafts from the "Pack size × Packs" version: keep the total.
+for (const r of krows) { if (r.labels != null && r.qty == null && num(r.split) > 0) r.qty = num(r.split) * Math.max(1, num(r.labels)); delete r.labels; }
+// Only finished goods and WIP go to outlets. FG ride in containers of 5 or 10 pcs; WIP in any weight.
+const SHIP_CATS = ["Finished Goods", "Work In Process"];
+const FG_SIZES = [5, 10];
+const isFG = (it) => it?.cat === "Finished Goods";
 
 async function loadItems() {
-  const list = await searchAll("items", { field_names: ["Item", "Code", "Product Name", "Unit"], automatic_fields: false });
-  items = list.map((r) => ({ id: r.record_id, code: txt(r.fields.Code), name: txt(r.fields["Product Name"]), unit: txt(r.fields.Unit) })).filter((i) => i.code);
+  const list = await searchAll("items", { field_names: ["Item", "Code", "Product Name", "Unit", "Category", "Storage"], automatic_fields: false });
+  items = list.map((r) => ({ id: r.record_id, code: txt(r.fields.Code), name: txt(r.fields["Product Name"]), unit: txt(r.fields.Unit), cat: txt(r.fields.Category), storage: txt(r.fields.Storage) })).filter((i) => i.code);
   renderPacking();
+  repack.render();
 }
 
 async function loadBatches() {
@@ -259,7 +269,6 @@ async function loadBatches() {
 
 function renderOutlets() {
   $("outlets").innerHTML = OUTLETS.map((o) => `<button class="chip" data-o="${esc(o)}" aria-pressed="${o === outlet}">${esc(o)}</button>`).join("");
-  $("cknote").hidden = outlet !== "Central Kitchen";
 }
 $("outlets").addEventListener("click", (e) => {
   const b = e.target.closest("[data-o]");
@@ -270,20 +279,26 @@ $("outlets").addEventListener("click", (e) => {
   updateBar();
 });
 
-// Pack size × Packs = Total. One label per pack; Packs left empty = 1 pack.
-// Saved as the Base fields Split (pack size), Labels (packs) and Qty (total).
-function rowCalc(r) {
-  const net = num(r.split);
-  const count = Math.max(1, Math.round(num(r.labels)) || 1);
-  return { count, net, total: net * count };
-}
+// Qty to send + content per container -> labels; a smaller last container gets its own net on the last label.
+// Saved as Qty + Split; the Base computes Label Count and the last label's net.
+const rowCalc = (r) => packCalc(r.qty, r.split);
+const calcText = (c, unit) => !c.total ? "" : c.last
+  ? `${c.count - 1} × ${fmt(c.net)} + 1 × ${fmt(c.last)} ${unit}`
+  : `${c.count} × ${fmt(c.net)} ${unit}`;
 
 function rowInfo(r) {
   const it = items.find((i) => i.id === r.item);
-  if (!it) return "Pick a product";
+  if (!it) return "Pick a finished good or WIP";
   const c = rowCalc(r);
-  if (!c.total) return `Enter the pack size in ${esc(it.unit)}`;
-  return `${c.count} pack(s) × ${fmt(c.net)} ${esc(it.unit)} = <b>${fmt(c.total)} ${esc(it.unit)}</b> · ${c.count} label(s)`;
+  if (!c.total) return `Enter the qty to send in ${esc(it.unit)}`;
+  return `${esc(calcText(c, it.unit))} = <b>${fmt(c.total)} ${esc(it.unit)}</b> · <b>${c.count}</b> label(s)`;
+}
+
+function sizeField(r, it) {
+  if (isFG(it)) {
+    return `<div class="field ksplit"><span>Per container</span><div class="seg">${FG_SIZES.map((n) => `<button type="button" class="segb" data-size="${n}" aria-pressed="${num(r.split) === n}">${n} pcs</button>`).join("")}</div></div>`;
+  }
+  return `<label class="field ksplit"><span>Per container</span><span class="unit"><input class="num" data-k="split" inputmode="decimal" enterkeyhint="done" placeholder="all" value="${esc(fmtQty(r.split))}">${it ? `<span class="u">${esc(it.unit)}</span>` : ""}</span></label>`;
 }
 
 function renderPacking() {
@@ -293,9 +308,8 @@ function renderPacking() {
     const mine = it ? batches.filter((b) => txt(b.fields["Product Code"]) === it.code).slice(0, 10) : [];
     return `<div class="krow" data-i="${i}">
       <label class="field pick kpick"><span>Product</span><input class="num" style="text-align:left" data-k="find" placeholder="Search code or name" autocomplete="off" value="${esc(it ? `${it.code} · ${it.name}` : r.find || "")}"><div class="menu" hidden></div></label>
-      <label class="field ksplit"><span>Pack size</span><span class="unit"><input class="num" data-k="split" inputmode="decimal" enterkeyhint="next" value="${esc(fmtQty(r.split))}">${it ? `<span class="u">${esc(it.unit)}</span>` : ""}</span></label>
-      <label class="field klabels"><span>Packs</span><input class="num" data-k="labels" inputmode="numeric" enterkeyhint="done" placeholder="1" value="${esc(fmtQty(r.labels))}"></label>
-      <div class="field kqty"><span>Total</span><output class="num ktotal" data-total>${(() => { const c = rowCalc(r); return c.total ? `${fmt(c.total)}${it ? ` ${esc(it.unit)}` : ""}` : "–"; })()}</output></div>
+      <label class="field kqty"><span>Qty to send</span><span class="unit"><input class="num" data-k="qty" inputmode="decimal" enterkeyhint="next" value="${esc(fmtQty(r.qty))}">${it ? `<span class="u">${esc(it.unit)}</span>` : ""}</span></label>
+      ${sizeField(r, it)}
       <label class="field kbatch"><span>Batch</span><select class="num" data-k="batch"><option value="">Latest (auto)</option>${mine.map((b) => `<option value="${b.record_id}" ${b.record_id === r.batch ? "selected" : ""}>${esc(txt(b.fields["Lot Code"]) || txt(b.fields["Batch No"]))} · ${esc(txt(b.fields["Prod Date (label)"]).slice(0, 5))}</option>`).join("")}</select></label>
       <button class="x" data-del aria-label="Remove row">×</button>
       <div class="rowinfo">${rowInfo(r)}</div>
@@ -315,15 +329,12 @@ $("krows").addEventListener("input", (e) => {
     krows[i] = { ...krows[i], find: e.target.value, item: "" };
     const q = e.target.value.trim().toLowerCase();
     const menu = row.querySelector(".menu");
-    const hits = q ? items.filter((it) => `${it.code} ${it.name}`.toLowerCase().includes(q)).slice(0, 8) : [];
+    const hits = q ? items.filter((it) => SHIP_CATS.includes(it.cat) && `${it.code} ${it.name}`.toLowerCase().includes(q)).slice(0, 8) : [];
     menu.innerHTML = hits.map((it) => `<button type="button" data-item="${it.id}"><b>${esc(it.code)}</b> · ${esc(it.name)}</button>`).join("");
     menu.hidden = !hits.length;
   } else {
     krows[i] = { ...krows[i], [k]: liveQty(e.target) };
     row.querySelector(".rowinfo").innerHTML = rowInfo(krows[i]);
-    const c = rowCalc(krows[i]);
-    const it = items.find((x) => x.id === krows[i].item);
-    row.querySelector("[data-total]").textContent = c.total ? `${fmt(c.total)}${it ? ` ${it.unit}` : ""}` : "–";
   }
   saveRows();
   updateBar();
@@ -333,11 +344,18 @@ $("krows").addEventListener("click", (e) => {
   if (!row) return;
   const i = +row.dataset.i;
   const pick = e.target.closest("[data-item]");
-  if (pick) {
-    krows[i] = { ...krows[i], item: pick.dataset.item, find: "", batch: "" };
+  const size = e.target.closest("[data-size]");
+  if (size) {
+    krows[i] = { ...krows[i], split: +size.dataset.size };
     saveRows();
     renderPacking();
-    row.parentElement.querySelector(`.krow[data-i="${i}"] [data-k="split"]`)?.focus();
+  } else if (pick) {
+    const it = items.find((x) => x.id === pick.dataset.item);
+    const keep = FG_SIZES.includes(num(krows[i].split)) ? num(krows[i].split) : 10;
+    krows[i] = { ...krows[i], item: pick.dataset.item, find: "", batch: "", split: isFG(it) ? keep : "" };
+    saveRows();
+    renderPacking();
+    row.parentElement.querySelector(`.krow[data-i="${i}"] [data-k="qty"]`)?.focus();
   } else if (e.target.closest("[data-del]")) {
     krows.splice(i, 1);
     if (!krows.length) krows.push({});
@@ -356,7 +374,8 @@ async function submitPacking() {
     records: rows.map((r) => {
       const fields = { Item: [r.item], Outlet: outlet, "Packing Date": now, "Print labels?": "No" };
       const c = rowCalc(r);
-      Object.assign(fields, { Split: c.net, Labels: c.count, Qty: c.total });
+      fields.Qty = c.total;
+      if (c.count > 1) fields.Split = c.net;
       if (r.batch) fields["Batch (optional)"] = [r.batch];
       return { fields };
     }),
@@ -365,10 +384,10 @@ async function submitPacking() {
   krows = [{}];
   saveRows();
   renderPacking();
-  status(`✅ Packed ${ids.length} product(s) for ${esc(outlet)}.`, "ok");
+  status(`✅ Pengiriman saved: ${ids.length} product(s) → ${esc(outlet)}.`, "ok");
   if ($("kprint").checked) {
     const recs = await getRecords("packing", ids);
-    openLabels(recs.map((r) => txt(r.fields["Label Line"])).filter(Boolean).join("^"), `Packing → ${outlet}`);
+    openLabels(recs.map((r) => txt(r.fields["Label Line"])).filter(Boolean).join("^"), `Pengiriman → ${outlet}`);
   }
 }
 
@@ -384,8 +403,13 @@ function updateBar() {
     const rows = packRows();
     const labels = rows.reduce((t, r) => t + rowCalc(r).count, 0);
     $("sum").innerHTML = outlet ? `<b>${rows.length}</b> product(s) · ${labels} label(s) → <b>${esc(outlet)}</b>` : `<span class="danger">Pick an outlet</span>`;
-    $("submit").textContent = "Submit packing";
+    $("submit").textContent = "Submit pengiriman";
     $("submit").disabled = !rows.length || !outlet;
+  } else if (tab === "repack") {
+    const b = repack.bar();
+    $("sum").innerHTML = b.html;
+    $("submit").textContent = b.label;
+    $("submit").disabled = b.disabled;
   } else if (tab === "wms" && wms) {
     const b = wms.bar();
     $("sum").innerHTML = b.html;
@@ -395,16 +419,16 @@ function updateBar() {
 }
 
 $("submit").addEventListener("click", () => {
-  if (tab === "wms") {
-    const s = wms.summary();
+  if (tab === "wms" || tab === "repack") {
+    const s = (tab === "wms" ? wms : repack).summary();
     $("ctitle").textContent = s.title;
     $("clist").innerHTML = s.lines.map((l) => `<li>${l}</li>`).join("");
     return $("confirm").showModal();
   }
   const lines = tab === "prod"
     ? prodRows().map((r) => { const d = draft[r.id]; return `${esc(r.name)}: ${fmt(num(d.b))} batch → ${fmt(num(d.q))} ${esc(r.unit)}${num(d.c) > 0 ? ` · 🖨 ${Math.round(num(d.c))} label(s)` : ""}`; })
-    : packRows().map((r) => { const it = items.find((x) => x.id === r.item); const c = rowCalc(r); return `${esc(it.name)}: ${c.count} × ${fmt(c.net)} ${esc(it.unit)}`; });
-  $("ctitle").textContent = tab === "prod" ? "Submit production?" : `Submit packing → ${outlet}?`;
+    : packRows().map((r) => { const it = items.find((x) => x.id === r.item); const c = rowCalc(r); return `${esc(it.name)}: ${fmt(c.total)} ${esc(it.unit)} = ${esc(calcText(c, it.unit))} · ${c.count} label(s)`; });
+  $("ctitle").textContent = tab === "prod" ? "Submit production?" : `Kirim ke ${outlet}?`;
   $("clist").innerHTML = lines.map((l) => `<li>${l}</li>`).join("");
   $("confirm").showModal();
 });
@@ -416,6 +440,7 @@ $("cyes").addEventListener("click", async () => {
   try {
     if (tab === "prod") await submitProduction();
     else if (tab === "wms") await wms.submit();
+    else if (tab === "repack") await repack.submit();
     else await submitPacking();
   } catch (e) {
     status(`Could not save: ${esc(e.message)}. Nothing was lost, try again.`);
@@ -487,22 +512,39 @@ async function loadRecent() {
     for (const p of packs) { const ref = txt(p.fields["Packing Ref"]); if (ref && !seen.has(ref)) seen.set(ref, p); if (seen.size >= 15) break; }
     $("recentP").innerHTML = [...seen.values()].map((p) => `<div class="lrow"><div class="t"><b>${esc(txt(p.fields.Outlet))} · ${esc(txt(p.fields["Packing Ref"]))}</b><span class="muted">${esc(txt(p.fields["Packing Summary"]).split("\n").join(" · "))}</span></div><button class="ghost" data-p="${p.record_id}">Labels</button></div>`).join("") || `<p class="muted">No packing yet.</p>`;
     recentPacks = Object.fromEntries([...seen.values()].map((p) => [p.record_id, p]));
+    const reps = await searchAll("repack", { field_names: ["Repack Ref", "Location", "Item Name", "Total Qty", "Unit", "Packs", "Label Line", "Repack Date"], sort: [{ field_name: "Repack Date", desc: true }], automatic_fields: false });
+    recentReps = groupRepacks(reps).slice(0, 15);
+    $("recentR").innerHTML = recentReps.map((g, k) => `<div class="lrow"><div class="t"><b>${esc(g.loc)} · ${esc(g.ref)}</b><span class="muted">${esc(g.rows.map((r) => `${txt(r.fields["Item Name"])} ${fmt(num(r.fields["Total Qty"]))} ${txt(r.fields.Unit)}`).join(" · "))}</span></div><button class="ghost" data-r="${k}">Labels</button></div>`).join("") || `<p class="muted">No repacking yet.</p>`;
   } catch (e) {
     $("recentB").innerHTML = `<p class="note">Could not load: ${esc(e.message)}</p>`;
   }
 }
 let recentPacks = {};
+let recentReps = [];
+// Repack Lines grouped by submission (Repack Ref), newest first as fetched.
+function groupRepacks(rows) {
+  const m = new Map();
+  for (const r of rows) {
+    const ref = txt(r.fields["Repack Ref"]) || r.record_id;
+    if (!m.has(ref)) m.set(ref, []);
+    m.get(ref).push(r);
+  }
+  return [...m.entries()].map(([ref, rs]) => ({ ref, rows: rs, loc: txt(rs[0].fields.Location), at: num(rs[0].fields["Repack Date"]), by: txt(rs[0].fields["Created By"]) }));
+}
+const repackData = (g) => g.rows.map((r) => txt(r.fields["Label Line"])).filter(Boolean).join("^");
 $("v-labels").addEventListener("click", (e) => {
   const b = e.target.closest("[data-b]");
   const p = e.target.closest("[data-p]");
   if (b) { const rec = batches.find((x) => x.record_id === b.dataset.b); if (rec) openLabels(batchLine(rec), txt(rec.fields["Product Name"])); }
-  if (p) { const rec = recentPacks[p.dataset.p]; if (rec) openLabels(txt(rec.fields["Packing Label Data"]), `Packing → ${txt(rec.fields.Outlet)}`); }
+  if (p) { const rec = recentPacks[p.dataset.p]; if (rec) openLabels(txt(rec.fields["Packing Label Data"]), `Pengiriman → ${txt(rec.fields.Outlet)}`); }
+  const rp = e.target.closest("[data-r]");
+  if (rp) { const g = recentReps[+rp.dataset.r]; if (g) openLabels(repackData(g), `Repack · ${g.loc}`); }
 });
 
 // ---------- today dashboard ----------
 let day = new Date();
 day.setHours(0, 0, 0, 0);
-let dayData = { batches: [], packs: [] };
+let dayData = { batches: [], packs: [], reps: [] };
 
 const DAY_MS = 86400000;
 const sameDay = (a, b) => a.toDateString() === b.toDateString();
@@ -535,11 +577,12 @@ async function loadDay() {
   $("dnext").disabled = sameDay(day, new Date());
   $("kpis").innerHTML = `<p class="muted">Loading…</p>`;
   try {
-    const [b, p] = await Promise.all([
+    const [b, p, rp] = await Promise.all([
       fetchDay("batches", ["Batch No", "Lot Code", "Product Name", "Product Code", "Prod Date (label)", "Expiry (label)", "Label Batch Line", "Label Net", "Actual Output Qty", "Unit", "Storage", "Allergens", "Containers (labels)", "Production Date", "Recipe Runs (batch)", "Yield %", "Created By"], "Production Date", start, end),
       fetchDay("packing", ["Item Name", "Item Code", "Outlet", "Total Qty", "Unit", "Label Count", "Container Net", "Packing Ref", "Packing Date", "Created By", "Label Line"], "Packing Date", start, end),
+      fetchDay("repack", ["Repack Ref", "Location", "Item Name", "Item Code", "Total Qty", "Unit", "Packs", "Pack Size", "Last Pack", "Label Line", "Repack Date", "Created By"], "Repack Date", start, end).catch(() => []),
     ]);
-    dayData = { batches: b, packs: p };
+    dayData = { batches: b, packs: p, reps: rp };
     renderDay();
   } catch (e) {
     $("kpis").innerHTML = `<p class="note">Could not load: ${esc(e.message)}</p>`;
@@ -563,7 +606,7 @@ function packHtml(g) {
 }
 
 function renderDay() {
-  const { batches: bs, packs: ps } = dayData;
+  const { batches: bs, packs: ps, reps } = dayData;
   const out = ps.filter((r) => txt(r.fields.Outlet) !== "Central Kitchen");
   const ck = ps.filter((r) => txt(r.fields.Outlet) === "Central Kitchen");
   const outlets = [...new Set(out.map((r) => txt(r.fields.Outlet)))];
@@ -585,8 +628,8 @@ function renderDay() {
 
   $("kpis").innerHTML = [
     { k: "Produced", v: bal.size, s: `${bs.length} batch entr${bs.length === 1 ? "y" : "ies"}`, go: "s-prod" },
-    { k: "Sent to outlets", v: outlets.length, s: `${groupPacks(out).length} packing(s)`, go: "s-out" },
-    { k: "Repacked (CK)", v: new Set(ck.map((r) => txt(r.fields["Item Code"]))).size, s: `${ck.length} line(s)`, go: "s-ck" },
+    { k: "Sent to outlets", v: outlets.length, s: `${groupPacks(out).length} pengiriman`, go: "s-out" },
+    { k: "Repacked", v: new Set([...ck, ...reps].map((r) => txt(r.fields["Item Code"]))).size, s: `${ck.length + reps.length} line(s)`, go: "s-ck" },
     { k: "Still to pack", v: waiting, s: "products with stock left", go: "s-bal", alert: waiting > 0 },
   ].map((x) => `<button class="kpi${x.alert ? " alert" : ""}" data-go="${x.go}"><div class="k">${x.k}</div><div class="v">${x.v}</div><div class="s">${x.s}</div></button>`).join("");
 
@@ -606,16 +649,20 @@ function renderDay() {
       }).join("")
     : `<p class="muted">Nothing packed to outlets.</p>`;
 
+  // Repack Lines per location (+ older Central Kitchen repacks saved as packing).
   const ckGroups = groupPacks(ck);
-  $("dck").innerHTML = ckGroups.length
-    ? `<details class="grp" open><summary><span class="t">Central Kitchen</span><span class="badge">${ckGroups.length} repack(s)</span></summary>${ckGroups.map(packHtml).join("")}</details>`
-    : `<p class="muted">No repacking.</p>`;
+  const rgs = groupRepacks([...reps].reverse());
+  const repHtml = (g) => `<div class="pk"><div class="t"><b>${esc(time(g.at))}</b> <span class="muted">· ${esc(g.by)} · ${esc(g.ref)}</span><ul>${g.rows.map((r) => `<li>${esc(txt(r.fields["Item Name"]))} — ${fmt(num(r.fields["Total Qty"]))} ${esc(txt(r.fields.Unit))} <span class="muted">(${fmt(num(r.fields.Packs))} label)</span></li>`).join("")}</ul></div><button class="ghost" data-rref="${esc(g.ref)}">Labels</button></div>`;
+  const locs = [...new Set(rgs.map((g) => g.loc))];
+  $("dck").innerHTML = (locs.map((l) => { const gs = rgs.filter((g) => g.loc === l); return `<details class="grp" open><summary><span class="t">${esc(l)}</span><span class="badge">${gs.length} repack(s)</span></summary>${gs.map(repHtml).join("")}</details>`; }).join("")
+    + (ckGroups.length ? `<details class="grp"><summary><span class="t">Central Kitchen (old)</span><span class="badge">${ckGroups.length} repack(s)</span></summary>${ckGroups.map(packHtml).join("")}</details>` : ""))
+    || `<p class="muted">No repacking.</p>`;
 
   $("dbal").innerHTML = balRows.length
     ? `<table class="bal"><thead><tr><th>Product</th><th>Made</th><th>Packed</th><th>Left</th></tr></thead><tbody>${balRows.map((e) => {
         const left = e.made - e.sent;
         return `<tr><td>${esc(e.name)}</td><td>${fmt(e.made)} ${esc(e.unit)}</td><td>${fmt(e.sent)}</td><td><span class="badge ${left > 0.0001 ? "warn" : "ok"}">${fmt(left)}</span></td></tr>`;
-      }).join("")}</tbody></table><p class="muted">Packed = sent to outlets on this day (Central Kitchen repacks not counted).</p>`
+      }).join("")}</tbody></table><p class="muted">Packed = pengiriman to outlets on this day (repacking not counted).</p>`
     : `<p class="muted">Nothing produced.</p>`;
 }
 
@@ -635,7 +682,12 @@ $("v-today").addEventListener("click", (e) => {
   const pref = e.target.closest("[data-pref]");
   if (pref) {
     const rows = dayData.packs.filter((r) => (txt(r.fields["Packing Ref"]) || r.record_id) === pref.dataset.pref);
-    openLabels(rows.map((r) => txt(r.fields["Label Line"])).filter(Boolean).join("^"), `Packing → ${txt(rows[0].fields.Outlet)}`);
+    openLabels(rows.map((r) => txt(r.fields["Label Line"])).filter(Boolean).join("^"), `Pengiriman → ${txt(rows[0].fields.Outlet)}`);
+  }
+  const rref = e.target.closest("[data-rref]");
+  if (rref) {
+    const g = groupRepacks(dayData.reps).find((x) => x.ref === rref.dataset.rref);
+    if (g) openLabels(repackData(g), `Repack · ${g.loc}`);
   }
 });
 $("dprev").addEventListener("click", () => { day = new Date(day.getTime() - DAY_MS); loadDay(); });
@@ -672,6 +724,7 @@ async function uploadPhoto(file, which) {
 }
 
 const wms = createWms({ $, base, searchAll, txt, num, fmt, store, status, uploadPhoto, updateBar: () => updateBar() });
+const repack = createRepack({ $, base, txt, num, fmt, store, status, wms, getItems: () => items, getBatches: () => batches, loadBatches, openLabels, updateBar: () => updateBar() });
 
 let booted = false;
 
@@ -686,7 +739,7 @@ renderPacking();
     await signIn();
     booted = true;
     status("");
-    await Promise.all([loadRecipes(), loadItems(), loadBatches().then(renderPacking), tab === "today" ? loadDay() : null, tab === "wms" ? wms.load() : null]);
+    await Promise.all([loadRecipes(), loadItems(), loadBatches().then(renderPacking), tab === "today" ? loadDay() : null, tab === "wms" ? wms.load() : null, tab === "repack" ? repack.load() : null]);
   } catch (e) {
     status(`Sign-in or loading failed: ${esc(e.message)}. Open this app from Lark Workplace.`);
   }

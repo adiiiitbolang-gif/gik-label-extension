@@ -6,7 +6,8 @@
   ],
   "apps": [
     { "id": "prod", "title": "Produksi", "desc": "Hasil produksi per resep, batch & yield", "group": "input", "icon": "pot", "kind": "embed", "path": "app.html", "tab": "prod", "enabled": true },
-    { "id": "pack", "title": "Packing", "desc": "Bagi hasil produksi ke tiap outlet", "group": "input", "icon": "box", "kind": "embed", "path": "app.html", "tab": "pack", "enabled": true },
+    { "id": "pack", "title": "Pengiriman", "desc": "FG & WIP ke outlet, label per container", "group": "input", "icon": "truck", "kind": "embed", "path": "app.html", "tab": "pack", "enabled": true },
+    { "id": "repack", "title": "Repacking", "desc": "Kemas ulang item di CK atau Gudang", "group": "input", "icon": "box", "kind": "embed", "path": "app.html", "tab": "repack", "enabled": true },
     { "id": "wms", "title": "Gudang", "desc": "Inbound, transfer, outbond, kirim/rusak", "group": "input", "icon": "warehouse", "kind": "embed", "path": "app.html", "tab": "wms", "enabled": true },
     { "id": "today", "title": "Hari Ini", "desc": "Ringkasan produksi, packing & sisa", "group": "monitor", "icon": "chart", "kind": "embed", "path": "app.html", "tab": "today", "enabled": true },
     { "id": "labels", "title": "Label", "desc": "Cetak & cetak ulang label 50×30", "group": "monitor", "icon": "printer", "kind": "embed", "path": "app.html", "tab": "labels", "enabled": true },
