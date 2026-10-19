@@ -27,7 +27,7 @@ main{max-width:1100px;margin:0 auto;padding:14px 16px 120px}
 .chip{height:36px;padding:0 12px;border-radius:18px;border:1px solid var(--line);background:var(--panel);cursor:pointer;font-size:14px}
 .chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 /* production sheet */
-.sheet-head,.prow{display:grid;grid-template-columns:minmax(0,1fr) 92px 112px 92px 64px 72px;gap:8px;align-items:center}
+.sheet-head,.prow{display:grid;grid-template-columns:minmax(0,1fr) 92px 130px 92px 72px;gap:8px;align-items:center}
 .sheet-head{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;padding:0 12px 6px}
 .prow{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin-bottom:6px}
 .prow.filled{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
@@ -37,7 +37,7 @@ main{max-width:1100px;margin:0 auto;padding:14px 16px 120px}
 .num:focus,.search:focus,select:focus{outline:2px solid var(--accent);outline-offset:1px}
 .unit{position:relative;display:block}
 .unit .u{position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--muted);pointer-events:none}
-.unit .num{padding-right:30px}
+.unit .num{padding-right:44px}
 .chk{width:26px;height:26px;accent-color:var(--accent);justify-self:center}
 .yield{text-align:right;font-variant-numeric:tabular-nums;font-size:14px}
 .yield.warn{color:var(--bad);font-weight:600}
@@ -45,12 +45,12 @@ main{max-width:1100px;margin:0 auto;padding:14px 16px 120px}
 /* phone: name + yield on top, the three numbers side by side with their labels above, print below */
 @media (max-width:720px){
   .sheet-head{display:none}
-  .prow{grid-template-columns:repeat(3,minmax(0,1fr));grid-template-areas:"info info yield" "b q c" "p p p";gap:12px 10px;padding:12px;margin-bottom:10px}
+  .prow{grid-template-columns:repeat(3,minmax(0,1fr));grid-template-areas:"info info yield" "b q c";gap:12px 10px;padding:12px;margin-bottom:10px}
+  .prow .unit .u{display:none}
+  .prow .unit .num{padding-right:8px}
   .prow .pinfo{grid-area:info}
   .prow .yield{grid-area:yield;align-self:start}
   .prow .cb{grid-area:b}.prow .cq{grid-area:q}.prow .cc{grid-area:c}
-  .prow .cprint{grid-area:p;display:flex;align-items:center;gap:10px;min-height:32px}
-  .prow .cprint .lbl-m{margin:0;font-size:14px;color:var(--ink)}
   .lbl-m{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;white-space:nowrap}
   .prow .num{height:48px;font-size:17px}
   .chk{justify-self:start}
@@ -69,6 +69,8 @@ main{max-width:1100px;margin:0 auto;padding:14px 16px 120px}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 .krow{display:grid;grid-template-columns:minmax(0,1fr) 84px 84px 84px minmax(0,150px) 40px;gap:8px;align-items:end;padding:10px 0;border-top:1px solid var(--line)}
 .krow:first-child{border-top:0}
+.krow .field>span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ktotal{display:flex;align-items:center;justify-content:flex-end;background:var(--soft);border-color:transparent;font-weight:700;white-space:nowrap;overflow:hidden}
 .pick{position:relative}
 .pick input{width:100%}
 .menu{position:absolute;left:0;right:0;top:100%;z-index:4;background:var(--panel);border:1px solid var(--line);border-radius:10px;margin-top:4px;max-height:280px;overflow:auto;box-shadow:0 8px 24px rgba(0,0,0,.15)}
@@ -259,7 +261,7 @@ dialog ul{padding-left:18px;margin:8px 0;max-height:50vh;overflow:auto}
       <button id="pfilled" class="chip" aria-pressed="false">Filled only</button>
       <button id="pclear" class="chip">Clear all</button>
     </div>
-    <div class="sheet-head"><span>Recipe</span><span>Std batches</span><span>Output</span><span>Containers</span><span style="text-align:center">Print</span><span style="text-align:right">Yield</span></div>
+    <div class="sheet-head"><span>Recipe</span><span>Std batches</span><span>Output</span><span>Labels</span><span style="text-align:right">Yield</span></div>
     <div id="plist"></div>
   </section>
 
@@ -321,6 +323,6 @@ dialog ul{padding-left:18px;margin:8px 0;max-height:50vh;overflow:auto}
 <div class="printsheet sheet" id="printsheet"></div>
 
 <script src="https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.34.js"></script>
-<script src="./webapp.js?v=1792424648"></script>
+<script src="./webapp.js?v=1792425281"></script>
 </body>
 </html>

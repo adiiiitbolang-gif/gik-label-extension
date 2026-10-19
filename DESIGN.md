@@ -19,7 +19,14 @@ Dipakai di tablet dapur dan HP gudang, sering dengan tangan basah atau bersarung
 
 Warna status **bukan** bagian dari 10% dan hanya untuk arti data, tidak untuk tombol:
 hijau `--ok-*` = berhasil, oranye `--warn-*` = perlu dicek, merah `--bad` = salah / kurang / yield di luar 70–130%.
-Biru dipilih untuk aksi supaya tidak tertukar dengan hijau "berhasil". Ikon tile di hub semuanya slate; biru hanya muncul saat disentuh atau aktif.
+Biru dipilih untuk aksi supaya tidak tertukar dengan hijau "berhasil".
+
+Ikon aplikasi boleh berwarna (bagian dari 10%, hanya glyph kecil + latar tipis), satu warna per grup:
+biru `--i-input` = Input harian · ungu `--i-monitor` = Pantau & cetak · teal `--i-base` = Lark Base.
+
+## Istilah input
+- **Produksi**: Std batches · Output (satuan) · **Labels** = jumlah label dicetak (kosong/0 = tidak cetak). Disimpan ke "Containers (labels)".
+- **Packing**: **Pack size** (isi per pack) × **Packs** (jumlah pack, kosong = 1) = **Total** (dihitung, tidak diketik). Satu label per pack. Ukuran berbeda = satu baris per ukuran. Disimpan ke Split / Labels / Qty.
 
 ## Tipografi
 - Font sistem: `"Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif`. Tidak memuat font web (hemat data HP).
@@ -38,7 +45,7 @@ Link keluar diberi ikon `external` kecil di pojok tile.
 
 ## Pola layar
 - **Hub**: header (logo G, nama, akun) → sapaan + tanggal → grup tile. Tile = kotak ikon slate + judul + deskripsi 1 baris. Badge "Terakhir dibuka" pada app terakhir.
-- **Viewer**: bar atas 52 px (kembali · ikon+judul · pemilih app · muat ulang · layar penuh). Di HP (≤ 720 px) pemilih app pindah ke **tab bar bawah** 58 px dengan ikon + label.
+- **Viewer**: di dalam Lark di HP bar atas disembunyikan (bar Lark sudah punya kembali/refresh). Di browser: bar atas 52 px (kembali · ikon+judul · pemilih app · muat ulang · layar penuh). Di HP (≤ 720 px) pemilih app pindah ke **tab bar bawah** 58 px dengan ikon + label.
 - **App di dalam viewer** (`html.embed`): header dan tab app disembunyikan; bar Submit menempel di bawah iframe.
 - **Baris input di HP** (≤ 720 px): nama di atas, angka berdampingan dengan label di atas tiap kotak (bukan di dalam kotak), kotak 48 px, jarak 10–12 px. Satuan (Pcs, g) ditaruh di kanan dalam kotak, label tidak pernah.
 - Status memuat: spinner + teks abu. Galat: teks tebal + tombol "Kembali ke menu".

@@ -104,7 +104,8 @@ document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () 
 
 // ---------- production ----------
 let recipes = [];
-let draft = store.get("gik.prod", {}); // recipeId -> { b, q, c, p }
+let draft = store.get("gik.prod", {}); // recipeId -> { b: std batches, q: output, c: labels to print }
+for (const d of Object.values(draft)) { if (d.p && !(num(d.c) > 0)) d.c = 1; delete d.p; }
 let filledOnly = false;
 
 async function loadRecipes() {
@@ -145,9 +146,8 @@ function renderRecipes() {
         return `<div class="prow${filled ? " filled" : ""}" data-id="${r.id}">
           <div class="pinfo"><div class="pname">${esc(r.name)}</div><div class="psub">${esc(r.code)} · 1 batch = ${fmt(r.yieldQty)} ${esc(r.unit)}</div></div>
           <label class="cb"><span class="lbl-m">Std batches</span><input class="num" data-k="b" inputmode="decimal" enterkeyhint="next" value="${esc(fmtQty(d.b))}" aria-label="Std batches ${esc(r.name)}"></label>
-          <label class="cq"><span class="lbl-m">Output</span><span class="unit"><input class="num" data-k="q" inputmode="decimal" enterkeyhint="next" value="${esc(fmtQty(d.q))}" aria-label="Output ${esc(r.unit)} ${esc(r.name)}"><span class="u">${esc(r.unit)}</span></span></label>
-          <label class="cc"><span class="lbl-m">Containers</span><input class="num" data-k="c" inputmode="numeric" enterkeyhint="next" value="${esc(fmtQty(d.c))}" aria-label="Containers ${esc(r.name)}"></label>
-          <label class="cprint"><input type="checkbox" class="chk" data-k="p" ${d.p ? "checked" : ""} aria-label="Print labels ${esc(r.name)}"><span class="lbl-m">Print labels</span></label>
+          <label class="cq"><span class="lbl-m">Output (${esc(r.unit)})</span><span class="unit"><input class="num" data-k="q" inputmode="decimal" enterkeyhint="next" value="${esc(fmtQty(d.q))}" aria-label="Output ${esc(r.unit)} ${esc(r.name)}"><span class="u">${esc(r.unit)}</span></span></label>
+          <label class="cc"><span class="lbl-m">Labels</span><input class="num" data-k="c" inputmode="numeric" enterkeyhint="done" placeholder="0" value="${esc(fmtQty(d.c))}" aria-label="Labels to print ${esc(r.name)}"></label>
           <div class="yield${y.warn ? " warn" : ""}" data-y>${y.t}</div>
         </div>`;
       }).join("")
@@ -162,7 +162,7 @@ $("plist").addEventListener("input", (e) => {
   const d = { ...(draft[id] || {}) };
   const k = e.target.dataset.k;
   d[k] = k === "p" ? e.target.checked : liveQty(e.target);
-  if (!d.b && !d.q && !d.c && !d.p) delete draft[id];
+  if (!d.b && !d.q && !d.c) delete draft[id];
   else draft[id] = d;
   store.set("gik.prod", draft);
   const r = recipes.find((x) => x.id === id);
@@ -219,7 +219,7 @@ async function submitProduction() {
     }),
   });
   const ids = created.records.map((x) => x.record_id);
-  const printIds = ids.filter((_, i) => draft[rows[i].id].p);
+  const printIds = ids.filter((_, i) => num(draft[rows[i].id].c) > 0);
   for (const r of rows) delete draft[r.id];
   store.set("gik.prod", draft);
   renderRecipes();
@@ -270,21 +270,20 @@ $("outlets").addEventListener("click", (e) => {
   updateBar();
 });
 
+// Pack size × Packs = Total. One label per pack; Packs left empty = 1 pack.
+// Saved as the Base fields Split (pack size), Labels (packs) and Qty (total).
 function rowCalc(r) {
-  const split = num(r.split);
-  const qty = num(r.qty);
-  const labels = num(r.labels);
-  const count = split > 0 ? (labels > 0 ? labels : qty > 0 ? Math.ceil(qty / split) : 1) : labels > 0 ? labels : 1;
-  const total = split > 0 && labels > 0 ? split * labels : qty;
-  return { count, total, net: split > 0 ? split : total };
+  const net = num(r.split);
+  const count = Math.max(1, Math.round(num(r.labels)) || 1);
+  return { count, net, total: net * count };
 }
 
 function rowInfo(r) {
   const it = items.find((i) => i.id === r.item);
   if (!it) return "Pick a product";
   const c = rowCalc(r);
-  if (!c.total) return "Enter Qty, or Split × Labels";
-  return `${c.count} label(s) × ${fmt(c.net)} ${esc(it.unit)} · total ${fmt(c.total)} ${esc(it.unit)}`;
+  if (!c.total) return `Enter the pack size in ${esc(it.unit)}`;
+  return `${c.count} pack(s) × ${fmt(c.net)} ${esc(it.unit)} = <b>${fmt(c.total)} ${esc(it.unit)}</b> · ${c.count} label(s)`;
 }
 
 function renderPacking() {
@@ -294,9 +293,9 @@ function renderPacking() {
     const mine = it ? batches.filter((b) => txt(b.fields["Product Code"]) === it.code).slice(0, 10) : [];
     return `<div class="krow" data-i="${i}">
       <label class="field pick kpick"><span>Product</span><input class="num" style="text-align:left" data-k="find" placeholder="Search code or name" autocomplete="off" value="${esc(it ? `${it.code} · ${it.name}` : r.find || "")}"><div class="menu" hidden></div></label>
-      <label class="field ksplit"><span>Split</span><input class="num" data-k="split" inputmode="decimal" value="${esc(fmtQty(r.split))}"></label>
-      <label class="field klabels"><span>Labels</span><input class="num" data-k="labels" inputmode="numeric" value="${esc(fmtQty(r.labels))}"></label>
-      <label class="field kqty"><span>Qty</span><input class="num" data-k="qty" inputmode="decimal" value="${esc(fmtQty(r.qty))}"></label>
+      <label class="field ksplit"><span>Pack size</span><span class="unit"><input class="num" data-k="split" inputmode="decimal" enterkeyhint="next" value="${esc(fmtQty(r.split))}">${it ? `<span class="u">${esc(it.unit)}</span>` : ""}</span></label>
+      <label class="field klabels"><span>Packs</span><input class="num" data-k="labels" inputmode="numeric" enterkeyhint="done" placeholder="1" value="${esc(fmtQty(r.labels))}"></label>
+      <div class="field kqty"><span>Total</span><output class="num ktotal" data-total>${(() => { const c = rowCalc(r); return c.total ? `${fmt(c.total)}${it ? ` ${esc(it.unit)}` : ""}` : "–"; })()}</output></div>
       <label class="field kbatch"><span>Batch</span><select class="num" data-k="batch"><option value="">Latest (auto)</option>${mine.map((b) => `<option value="${b.record_id}" ${b.record_id === r.batch ? "selected" : ""}>${esc(txt(b.fields["Lot Code"]) || txt(b.fields["Batch No"]))} · ${esc(txt(b.fields["Prod Date (label)"]).slice(0, 5))}</option>`).join("")}</select></label>
       <button class="x" data-del aria-label="Remove row">×</button>
       <div class="rowinfo">${rowInfo(r)}</div>
@@ -322,6 +321,9 @@ $("krows").addEventListener("input", (e) => {
   } else {
     krows[i] = { ...krows[i], [k]: liveQty(e.target) };
     row.querySelector(".rowinfo").innerHTML = rowInfo(krows[i]);
+    const c = rowCalc(krows[i]);
+    const it = items.find((x) => x.id === krows[i].item);
+    row.querySelector("[data-total]").textContent = c.total ? `${fmt(c.total)}${it ? ` ${it.unit}` : ""}` : "–";
   }
   saveRows();
   updateBar();
@@ -353,9 +355,8 @@ async function submitPacking() {
   const created = await base("packing", "create", {
     records: rows.map((r) => {
       const fields = { Item: [r.item], Outlet: outlet, "Packing Date": now, "Print labels?": "No" };
-      if (num(r.split) > 0) fields.Split = num(r.split);
-      if (num(r.labels) > 0) fields.Labels = Math.round(num(r.labels));
-      if (num(r.qty) > 0) fields.Qty = num(r.qty);
+      const c = rowCalc(r);
+      Object.assign(fields, { Split: c.net, Labels: c.count, Qty: c.total });
       if (r.batch) fields["Batch (optional)"] = [r.batch];
       return { fields };
     }),
@@ -401,7 +402,7 @@ $("submit").addEventListener("click", () => {
     return $("confirm").showModal();
   }
   const lines = tab === "prod"
-    ? prodRows().map((r) => { const d = draft[r.id]; return `${esc(r.name)}: ${fmt(num(d.b))} batch → ${fmt(num(d.q))} ${esc(r.unit)}${d.p ? ` · 🖨 ${num(d.c) || 1}` : ""}`; })
+    ? prodRows().map((r) => { const d = draft[r.id]; return `${esc(r.name)}: ${fmt(num(d.b))} batch → ${fmt(num(d.q))} ${esc(r.unit)}${num(d.c) > 0 ? ` · 🖨 ${Math.round(num(d.c))} label(s)` : ""}`; })
     : packRows().map((r) => { const it = items.find((x) => x.id === r.item); const c = rowCalc(r); return `${esc(it.name)}: ${c.count} × ${fmt(c.net)} ${esc(it.unit)}`; });
   $("ctitle").textContent = tab === "prod" ? "Submit production?" : `Submit packing → ${outlet}?`;
   $("clist").innerHTML = lines.map((l) => `<li>${l}</li>`).join("");

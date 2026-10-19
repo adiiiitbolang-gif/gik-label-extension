@@ -6,6 +6,8 @@
   --chrome:#1f2933;--chrome-ink:#f5f7fa;--chrome-muted:#a7b1bd;--chrome-hover:#2c3946;
   --accent:#1a66d9;--accent-ink:#fff;--accent-soft:#e6effc;
   --warn-bg:#fff4e0;--warn-ink:#7a4b00;--bad:#c62828;
+  /* icon tints: small glyphs only, one per app group (part of the 10%) */
+  --i-input:#1a66d9;--i-input-bg:#e6effc;--i-monitor:#6b4fc8;--i-monitor-bg:#efeafb;--i-base:#0f7c8c;--i-base-bg:#e2f3f5;
   --r:14px;--shadow:0 1px 2px rgba(15,23,32,.06),0 4px 14px rgba(15,23,32,.05);
   --font:"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;
 }
@@ -14,6 +16,7 @@
   --chrome:#0d1217;--chrome-ink:#e6eaef;--chrome-muted:#8794a2;--chrome-hover:#1b232c;
   --accent:#5b9cf5;--accent-ink:#0b1420;--accent-soft:#1c2c44;
   --warn-bg:#3a2e17;--warn-ink:#f3cf8f;--bad:#ff8a80;
+  --i-input:#6ea8f7;--i-input-bg:#1c2c44;--i-monitor:#ac95f2;--i-monitor-bg:#29233f;--i-base:#55c4d2;--i-base-bg:#15333a;
   --shadow:none;color-scheme:dark}}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
@@ -45,8 +48,9 @@ a{color:inherit}
 .tile:hover{border-color:var(--accent)}
 .tile:active{transform:scale(.985)}
 .tile:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.tile .ib{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;flex:none;background:var(--soft);color:var(--ink)}
-.tile:hover .ib{background:var(--accent-soft);color:var(--accent)}
+.tile .ib{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;flex:none;background:var(--i-input-bg);color:var(--i-input)}
+.tile[data-group="monitor"] .ib{background:var(--i-monitor-bg);color:var(--i-monitor)}
+.tile[data-group="base"] .ib{background:var(--i-base-bg);color:var(--i-base)}
 .tile .tx{min-width:0;flex:1}
 .tile b{display:block;font-size:16px;line-height:1.25}
 .tile small{display:block;color:var(--muted);font-size:13px;line-height:1.35;margin-top:2px}
@@ -70,7 +74,8 @@ html.vw,html.vw body{height:100%;overflow:hidden}
 .vbtn:hover{background:var(--chrome-hover)}
 .vbtn:focus-visible{outline:2px solid var(--accent)}
 .vtitle{display:flex;align-items:center;gap:8px;min-width:0;font-weight:700;font-size:16px;padding-right:6px}
-.vtitle .ib{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--chrome-hover);color:var(--chrome-ink);flex:none}
+.vtitle .ib{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--chrome-hover);color:var(--i-input);flex:none}
+.vtitle[data-group="monitor"] .ib{color:var(--i-monitor)}
 .vtitle .ib .ic{width:18px;height:18px}
 .vtitle span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .switch{display:flex;gap:4px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none;justify-content:center}
@@ -96,3 +101,5 @@ html.vw,html.vw body{height:100%;overflow:hidden}
   .switch button[aria-current="page"]{background:none;color:var(--chrome-ink);box-shadow:inset 0 3px 0 var(--accent)}
 }
 @media (min-width:721px){.vwrap > .switch{display:none}}
+/* inside Lark on a phone: Lark's own title bar has back and refresh, so the viewer bar would only repeat it */
+html.lark-phone .vbar{display:none}

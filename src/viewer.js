@@ -1,11 +1,12 @@
 import { $, esc, icon, loadManifest, embedSrc, store } from "./hubShared.js";
-import { createSession, exposeHost } from "./lark.js";
+import { createSession, exposeHost, inLark, isMobile } from "./lark.js";
 
 // Viewer: one app from apps.json in a full-window same-origin iframe.
 // ?app=<id> must be an enabled "embed" entry of the manifest; nothing else from the address is used.
 const session = createSession();
 exposeHost(session); // the app inside asks this page for Lark sign-in and for opening links
 
+if (inLark && isMobile) document.documentElement.classList.add("lark-phone");
 $("back").innerHTML = icon("back");
 $("reload").innerHTML = icon("reload");
 $("full").innerHTML = icon("expand");
