@@ -34,7 +34,8 @@ const OPS = {
 const UPDATABLE = new Set(["repack"]);
 
 // Label QR codes: /q/<kind>/<record_id> opens that record in the Production base (short = a sparse, scannable QR).
-const QR_TABLES = { b: "tblNKpqO2NH81eZ2", p: "tblCLOQlUrKzd3dU", r: "tblcC0RUenqp0gge" };
+// [table, grid view]: Lark only opens the record detail when the link also names a view.
+const QR_TABLES = { b: ["tblNKpqO2NH81eZ2", "vewzEsXIae"], p: ["tblCLOQlUrKzd3dU", "vewQWtzBEj"], r: ["tblcC0RUenqp0gge", "vewZxpnQWg"] };
 
 let tenantCache = { token: "", exp: 0 };
 let ticketCache = { ticket: "", exp: 0 };
@@ -188,7 +189,8 @@ export default {
     const url = new URL(request.url);
     const q = url.pathname.match(/^\/q\/([bpr])\/(rec\w{4,40})$/);
     if (q) {
-      const target = `https://${env.BASE_HOST}/base/${env.BASE_TOKEN}?table=${QR_TABLES[q[1]]}&record=${q[2]}`;
+      const [tbl, view] = QR_TABLES[q[1]];
+      const target = `https://${env.BASE_HOST}/base/${env.BASE_TOKEN}?table=${tbl}&view=${view}&record=${q[2]}`;
       return Response.redirect(target, 302);
     }
     if (url.pathname.startsWith("/api/")) {
