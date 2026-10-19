@@ -3,16 +3,12 @@ import { drawLabel, canvasToFile } from "./labelImage.js";
 import { setupDirectPrint } from "./directPrint.js";
 import { createWms } from "./wms.js";
 import { fmtQty, liveQty } from "./qty.js";
+import { createSession, inLark, isMobile, embedded, openLink } from "./lark.js";
 
 // GIK Production web app: opened from Lark Workplace (phone/tablet) or a browser.
 // Writes go straight to the Production base with the signed-in user's own token (through the Worker),
 // so no Base automation runs are used: labels are built and printed right here.
 const $ = (id) => document.getElementById(id);
-const ua = navigator.userAgent;
-const inLark = /Lark|Feishu/i.test(ua) && Boolean(window.h5sdk || window.tt);
-const isMobile = /Android|iPhone|iPad/i.test(ua);
-// bitable:app covers the Base v1 record calls (search, batch_create, batch_get).
-const SCOPES = ["bitable:app"];
 const OUTLETS = ["Central Kitchen", "MM Blok M", "MM PP", "MM Kokas", "MM CP", "MM PIM", "Peppino", "Maiku", "Lain2"];
 
 const store = {
@@ -21,68 +17,16 @@ const store = {
 };
 
 // ---------- sign-in ----------
-// Kept on the device (not per tab) so opening the app from a link reuses the sign-in until the token expires.
-let sess = (() => { try { return JSON.parse(localStorage.getItem("gik.session") || "null"); } catch { return null; } })();
-function saveSess(s) {
-  sess = s;
-  try { localStorage.setItem("gik.session", JSON.stringify(s)); } catch { /* fine */ }
-  $("who").textContent = s?.name || "";
-}
+const session = createSession((s) => ($("who").textContent = s?.name || ""));
+let sess = session.get();
+const saveSess = (s) => (sess = session.save(s));
+async function signIn(o) { sess = await session.signIn(o); return sess; }
 
 function status(msg, kind = "note") {
   const el = $("status");
   el.className = kind;
   el.innerHTML = msg || "";
   el.hidden = !msg;
-}
-
-async function post(url, body) {
-  const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.msg || `HTTP ${r.status}`);
-  return j;
-}
-
-function larkCode(appId) {
-  return new Promise((resolve, reject) => {
-    const scopeList = SCOPES;
-    const run = () => {
-      const tt = window.tt;
-      const fallback = () => tt.requestAuthCode({ appId, success: (r) => resolve(r.code), fail: (e) => reject(new Error(e?.errString || "sign-in refused")) });
-      if (tt?.requestAccess) {
-        tt.requestAccess({ appID: appId, scopeList, state: "gik", success: (r) => resolve(r.code), fail: (e) => (e?.errno === 103 ? fallback() : reject(new Error(e?.errString || "sign-in refused"))) });
-      } else if (tt?.requestAuthCode) fallback();
-      else reject(new Error("Lark sign-in is not available here"));
-    };
-    if (window.h5sdk?.ready) window.h5sdk.ready(run);
-    else run();
-  });
-}
-
-let signing = null;
-function signIn() {
-  if (!signing) signing = doSignIn().finally(() => (signing = null));
-  return signing;
-}
-
-async function doSignIn() {
-  if (sess?.token && Date.now() < sess.expires_at) return saveSess(sess);
-  // Renew silently from the saved sign-in (HttpOnly cookie) before asking Lark again.
-  try { return saveSess(await post("/api/refresh", {})); } catch { /* no saved sign-in: sign in below */ }
-  const { appId } = await fetch("/api/config").then((r) => r.json());
-  if (inLark) return saveSess(await post("/api/login", { code: await larkCode(appId) }));
-  // Plain browser: Lark OAuth redirect.
-  const back = location.origin + location.pathname;
-  const q = new URLSearchParams(location.search);
-  if (q.get("code") && q.get("state") === "gik") {
-    history.replaceState(null, "", back);
-    return saveSess(await post("/api/login", { code: q.get("code"), redirect_uri: back }));
-  }
-  const auth = new URL("https://accounts.larksuite.com/open-apis/authen/v1/authorize");
-  // offline_access gives a refresh token, so Lark's consent screen appears once per device, not every visit.
-  auth.search = new URLSearchParams({ client_id: appId, redirect_uri: back, state: "gik", scope: `${SCOPES.join(" ")} offline_access` });
-  location.href = auth.toString();
-  await new Promise(() => {}); // leaving the page
 }
 
 // ---------- Base access ----------
@@ -96,8 +40,7 @@ async function base(table, op, body, params = {}, retried = false) {
   });
   const j = await r.json().catch(() => ({}));
   if ((r.status === 401 || j.code === 99991677 || j.code === 99991668) && !retried) {
-    sess = { ...sess, expires_at: 0 };
-    await signIn();
+    await signIn({ force: true });
     return base(table, op, body, params, true);
   }
   // Token from an older sign-in without the Base scope: sign in again so Lark asks for it.
@@ -137,8 +80,13 @@ const num = (x) => parseFloat(txt(x)) || 0;
 const fmt = (n) => (Math.round(n * 100) / 100).toLocaleString("id-ID"); // 1.500 / 1,5 like the Base
 
 // ---------- tabs ----------
-let tab = store.get("gik.tab", "today");
+const TABS = ["today", "prod", "pack", "wms", "labels"];
+const asked = new URLSearchParams(location.search).get("tab");
+let tab = TABS.includes(asked) ? asked : store.get("gik.tab", "today");
+// Inside the hub's viewer the viewer has the app switcher, so the app's own header and tab bar are hidden.
+if (embedded) document.documentElement.classList.add("embed");
 function show(t) {
+  if (!TABS.includes(t)) t = "today";
   tab = t;
   store.set("gik.tab", t);
   document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
@@ -148,7 +96,10 @@ function show(t) {
   if (t === "today" && booted) loadDay();
   if (t === "wms" && booted) wms.load().catch(() => {});
   updateBar();
+  if (embedded) window.parent.postMessage({ type: "gik:tab", tab: t }, location.origin);
 }
+// The viewer switches tabs without reloading (loaded data and drafts stay).
+window.gikApp = { show };
 document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => show(b.dataset.tab)));
 
 // ---------- production ----------
@@ -510,32 +461,10 @@ $("share").addEventListener("click", async () => {
   }
 });
 
-let jsReady = null;
-function larkJsConfig() {
-  if (!jsReady) {
-    jsReady = (async () => {
-      const page = location.href.split("#")[0];
-      const c = await fetch(`/api/jsconfig?url=${encodeURIComponent(page)}`).then((r) => r.json());
-      await new Promise((resolve, reject) => window.h5sdk.config({ ...c, jsApiList: ["openSchema"], onSuccess: resolve, onFail: reject }));
-    })().catch((e) => { jsReady = null; throw e; });
-  }
-  return jsReady;
-}
-
 $("openext").addEventListener("click", async () => {
   const url = `${location.origin}/print.html?L=${labelData}`;
-  if (!inLark) return window.open(url, "_blank");
-  try {
-    await larkJsConfig();
-    window.tt.openSchema({ schema: url, external: true, fail: () => fallbackOpen(url) });
-  } catch {
-    fallbackOpen(url);
-  }
+  if (!(await openLink(url, { external: true }))) lblNote(`Open this link in Safari/Chrome: <a href="${esc(url)}" target="_blank">print page</a>`);
 });
-function fallbackOpen(url) {
-  if (/Android/i.test(ua)) location.href = `intent://${url.replace(/^https?:\/\//, "")}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(url)};end`;
-  else lblNote(`Open this link in Safari/Chrome: <a href="${esc(url)}" target="_blank">print page</a>`);
-}
 $("printnow").addEventListener("click", () => window.print());
 
 // Outside Lark (Chrome): print straight to the XP-4601B over Bluetooth, no printer app needed.

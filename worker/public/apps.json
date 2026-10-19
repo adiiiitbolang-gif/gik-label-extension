@@ -1,0 +1,16 @@
+{
+  "groups": [
+    { "id": "input", "title": "Input harian" },
+    { "id": "monitor", "title": "Pantau & cetak" },
+    { "id": "base", "title": "Lark Base", "note": "Dibuka di Lark" }
+  ],
+  "apps": [
+    { "id": "prod", "title": "Produksi", "desc": "Hasil produksi per resep, batch & yield", "group": "input", "icon": "pot", "kind": "embed", "path": "app.html", "tab": "prod", "enabled": true },
+    { "id": "pack", "title": "Packing", "desc": "Bagi hasil produksi ke tiap outlet", "group": "input", "icon": "box", "kind": "embed", "path": "app.html", "tab": "pack", "enabled": true },
+    { "id": "wms", "title": "Gudang", "desc": "Inbound, transfer, outbond, kirim/rusak", "group": "input", "icon": "warehouse", "kind": "embed", "path": "app.html", "tab": "wms", "enabled": true },
+    { "id": "today", "title": "Hari Ini", "desc": "Ringkasan produksi, packing & sisa", "group": "monitor", "icon": "chart", "kind": "embed", "path": "app.html", "tab": "today", "enabled": true },
+    { "id": "labels", "title": "Label", "desc": "Cetak & cetak ulang label 50×30", "group": "monitor", "icon": "printer", "kind": "embed", "path": "app.html", "tab": "labels", "enabled": true },
+    { "id": "wmsApp", "title": "WMS Matchaman", "desc": "BaseApp stok & dashboard gudang", "group": "base", "icon": "layout", "kind": "link", "url": "https://puyogroup.sg.larksuite.com/app/LF0ObbefDayHaQsS5EllHQFBghc", "enabled": true },
+    { "id": "prodBase", "title": "Production Base", "desc": "Tabel resep, BOM, batch & packing", "group": "base", "icon": "table", "kind": "link", "url": "https://puyogroup.sg.larksuite.com/base/MUOCbW70laiT4hsmYIVlgLH1gCc", "enabled": true }
+  ]
+}

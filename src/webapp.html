@@ -175,6 +175,11 @@ table.bal th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-s
   main{padding-bottom:190px}
   .jump{top:var(--toph,52px)}
 }
+/* inside the hub viewer: the viewer bar replaces the header and tabs */
+html.embed .top{display:none}
+html.embed .bar{bottom:0}
+html.embed main{padding-bottom:120px}
+html.embed .jump,html.embed .otop{top:0}
 .printsheet{display:none}
 dialog{border:0;border-radius:14px;padding:18px;max-width:min(520px,92vw);background:var(--panel);color:var(--ink)}
 dialog::backdrop{background:rgba(0,0,0,.4)}
