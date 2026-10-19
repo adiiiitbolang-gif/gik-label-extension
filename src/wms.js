@@ -315,11 +315,11 @@ export function createWms(ctx) {
     const cls = `orow${mode === "out" ? "" : " nopick"}${qty > 0 ? " filled" : ""}${dr.picked[it.id] ? " picked" : ""}${zero ? " zero" : ""}`;
     return `<div class="${cls}" data-oi="${it.id}">
       ${mode === "out" ? `<button class="opick" data-pick aria-label="Sudah diambil ${esc(it.name)}" aria-pressed="${Boolean(dr.picked[it.id])}">✓</button>` : ""}
-      <div class="oinfo"><b>${esc(it.name)}</b> <span class="muted">${esc(it.code)} · stok ${fmt(stock)} ${esc(it.unit)}</span>
+      <div class="oinfo"><b>${esc(it.name)}</b><div class="osub">${esc(it.code)} · stok <b>${fmt(stock)}</b> ${esc(it.unit)}</div>
         <div class="oplace">${locHtml(it)}</div>${batchPicker(it)}
         <div class="oextwrap">${extrasHtml(it)}</div>
         <div class="oalloc">${hintHtml(it)}</div></div>
-      <label class="oqty"><input class="num" data-k="qty" inputmode="decimal" enterkeyhint="next" value="${esc(fmtQty(dr.q[it.id]))}" aria-label="Qty ${esc(it.name)}" ${zero ? "disabled" : ""}><span>${esc(it.unit)}</span></label>
+      <label class="oqty"><input class="num" data-k="qty" inputmode="decimal" enterkeyhint="next" value="${esc(fmtQty(dr.q[it.id]))}" aria-label="Qty ${esc(it.name)}" ${zero ? "disabled" : ""}><span class="u">${esc(it.unit)}</span></label>
     </div>`;
   }
 

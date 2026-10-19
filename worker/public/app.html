@@ -5,19 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>GIK Production</title>
 <style>
-:root{--bg:#f4f6f3;--panel:#fff;--ink:#1d2721;--muted:#66736a;--line:#d9e0da;--soft:#eef2ee;--accent:#2f6f43;--accent-ink:#fff;--warn-bg:#fff4e0;--warn-ink:#7a4b00;--bad:#b3261e;--ok-bg:#e5f3e8;--ok-ink:#1e5631;--font:"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#171c19;--panel:#20271f;--ink:#e4eae5;--muted:#9aa79e;--line:#334039;--soft:#262f29;--accent:#7cc08d;--accent-ink:#0f1a12;--warn-bg:#3a2e17;--warn-ink:#f3cf8f;--bad:#ff8a80;--ok-bg:#1f3a27;--ok-ink:#b7e4c2;color-scheme:dark}}
+:root{--bg:#f5f6f8;--panel:#fff;--ink:#1f2933;--muted:#5b6673;--line:#dde1e6;--soft:#eef0f3;--chrome:#1f2933;--chrome-ink:#f5f7fa;--chrome-muted:#a7b1bd;--accent:#1a66d9;--accent-ink:#fff;--accent-soft:#e6effc;--warn-bg:#fff4e0;--warn-ink:#7a4b00;--bad:#c62828;--ok-bg:#e6f4ea;--ok-ink:#1e6b34;--font:"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#12171d;--panel:#1a2129;--ink:#e6eaef;--muted:#97a3b0;--line:#2c3540;--soft:#222a33;--chrome:#0d1217;--chrome-ink:#e6eaef;--chrome-muted:#8794a2;--accent:#5b9cf5;--accent-ink:#0b1420;--accent-soft:#1c2c44;--warn-bg:#3a2e17;--warn-ink:#f3cf8f;--bad:#ff8a80;--ok-bg:#1d3326;--ok-ink:#a9dcb8;color-scheme:dark}}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 var(--font)}
 button,input,select{font:inherit;color:inherit}
-.top{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line);padding:10px max(16px,env(safe-area-inset-left)) 0}
+.top{position:sticky;top:0;z-index:5;background:var(--chrome);color:var(--chrome-ink);padding:10px max(16px,env(safe-area-inset-left)) 0}
 .brand{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
 .brand h1{font-size:17px;margin:0}
-.brand .who{color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brand .who{color:var(--chrome-muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tabs{display:flex;gap:4px;margin-top:8px;overflow-x:auto}
-.tab{border:0;background:none;padding:10px 14px;border-bottom:3px solid transparent;font-weight:600;color:var(--muted);cursor:pointer;white-space:nowrap}
-.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+.tab{border:0;background:none;padding:10px 14px;border-bottom:3px solid transparent;font-weight:600;color:var(--chrome-muted);cursor:pointer;white-space:nowrap}
+.tab[aria-selected="true"]{color:var(--chrome-ink);border-bottom-color:var(--accent)}
 main{max-width:1100px;margin:0 auto;padding:14px 16px 120px}
 .note{background:var(--warn-bg);color:var(--warn-ink);border-radius:10px;padding:10px 12px;font-size:14px}
 .ok{background:var(--ok-bg);color:var(--ok-ink);border-radius:10px;padding:10px 12px;font-size:14px}
@@ -35,19 +35,24 @@ main{max-width:1100px;margin:0 auto;padding:14px 16px 120px}
 .psub{color:var(--muted);font-size:12px}
 .num{width:100%;height:42px;border:1px solid var(--line);border-radius:8px;background:var(--bg);text-align:right;padding:0 8px;font-variant-numeric:tabular-nums}
 .num:focus,.search:focus,select:focus{outline:2px solid var(--accent);outline-offset:1px}
-.unit{position:relative}
-.unit span{position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--muted);pointer-events:none}
+.unit{position:relative;display:block}
+.unit .u{position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--muted);pointer-events:none}
 .unit .num{padding-right:30px}
 .chk{width:26px;height:26px;accent-color:var(--accent);justify-self:center}
 .yield{text-align:right;font-variant-numeric:tabular-nums;font-size:14px}
 .yield.warn{color:var(--bad);font-weight:600}
 .lbl-m{display:none}
+/* phone: name + yield on top, the three numbers side by side with their labels above, print below */
 @media (max-width:720px){
   .sheet-head{display:none}
-  .prow{grid-template-columns:1fr 1fr;row-gap:6px}
-  .prow .pinfo{grid-column:1/3}
-  .lbl-m{display:block;font-size:11px;color:var(--muted);margin-bottom:2px}
-  .prow .cprint{display:flex;align-items:center;gap:8px}
+  .prow{grid-template-columns:repeat(3,minmax(0,1fr));grid-template-areas:"info info yield" "b q c" "p p p";gap:12px 10px;padding:12px;margin-bottom:10px}
+  .prow .pinfo{grid-area:info}
+  .prow .yield{grid-area:yield;align-self:start}
+  .prow .cb{grid-area:b}.prow .cq{grid-area:q}.prow .cc{grid-area:c}
+  .prow .cprint{grid-area:p;display:flex;align-items:center;gap:10px;min-height:32px}
+  .prow .cprint .lbl-m{margin:0;font-size:14px;color:var(--ink)}
+  .lbl-m{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;white-space:nowrap}
+  .prow .num{height:48px;font-size:17px}
   .chk{justify-self:start}
 }
 /* bottom bar */
@@ -72,7 +77,14 @@ main{max-width:1100px;margin:0 auto;padding:14px 16px 120px}
 .rowinfo{grid-column:1/-1;font-size:13px;color:var(--muted)}
 select.num{text-align:left}
 .x{height:42px;width:40px;border:1px solid var(--line);border-radius:8px;background:var(--panel);cursor:pointer;font-size:18px}
-@media (max-width:720px){.krow{grid-template-columns:1fr 1fr 1fr}.krow .pick,.krow .kbatch{grid-column:1/-1}.krow .x{grid-column:3;justify-self:end}}
+/* phone: product + remove on one line, Split · Labels · Qty below, then batch; each row is its own block */
+@media (max-width:720px){
+  .krow{grid-template-columns:repeat(3,minmax(0,1fr)) 44px;grid-template-areas:"pick pick pick x" "split labels qty qty" "batch batch batch batch" "info info info info";gap:10px;align-items:end;padding:14px 0}
+  .krow .kpick{grid-area:pick}.krow .ksplit{grid-area:split}.krow .klabels{grid-area:labels}.krow .kqty{grid-area:qty}.krow .kbatch{grid-area:batch}.krow .rowinfo{grid-area:info}
+  .krow .x{grid-area:x;width:44px;height:44px;justify-self:end}
+  .krow .num{height:48px;font-size:16px}
+  .krow .kqty .num{font-weight:600;font-size:17px}
+}
 /* gudang (WMS) */
 .wmodes{margin-bottom:10px}
 .wmodes .chip{height:42px;font-weight:600}
@@ -101,7 +113,7 @@ select.num{text-align:left}
 .ogroup span{font-weight:600;text-transform:none;letter-spacing:0}
 .orow{display:grid;grid-template-columns:44px minmax(0,1fr) 112px;gap:8px;align-items:start;padding:8px 0;border-bottom:1px solid var(--line)}
 .orow.nopick{grid-template-columns:minmax(0,1fr) 112px}
-.orow.filled{background:linear-gradient(90deg,var(--ok-bg),transparent 60%)}
+.orow.filled{background:linear-gradient(90deg,var(--accent-soft),transparent 70%)}
 .orow.picked .oinfo{opacity:.55}
 .orow.picked .oinfo > b{text-decoration:line-through}
 .orow.zero{opacity:.5}
@@ -120,8 +132,23 @@ select.num{text-align:left}
 .oalloc b{color:var(--ink)}
 .oqty{position:relative}
 .oqty .num{height:44px;font-size:17px;font-weight:600;padding-right:34px}
-.oqty span{position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--muted);pointer-events:none}
-@media (max-width:720px){.orow{grid-template-columns:40px minmax(0,1fr) 96px}.orow.nopick{grid-template-columns:minmax(0,1fr) 96px}.opick{width:40px;height:40px}.oext{grid-template-columns:1fr 1fr}}
+.oqty .u{position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--muted);pointer-events:none}
+.osub{color:var(--muted);font-size:13px;margin-top:2px}
+.osub b{color:var(--ink);font-weight:600}
+/* phone: more air between check, item text and qty box */
+@media (max-width:720px){
+  .orow{grid-template-columns:40px minmax(0,1fr) 104px;gap:12px;padding:12px 0}
+  .orow.nopick{grid-template-columns:minmax(0,1fr) 104px}
+  .opick{width:40px;height:40px}
+  .oinfo{line-height:1.35}
+  .oplace,.oalloc{margin-top:4px}
+  .oqty .num{height:48px}
+  .oext{grid-template-columns:1fr 1fr;gap:8px}
+  .wmodes{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .wmodes .chip{width:100%;justify-content:center}
+  .toolbar .search{flex-basis:100%}
+  .bar .sum{font-size:13px;line-height:1.3}
+}
 /* labels */
 .previews{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
 .previews canvas{width:200px;height:120px;border:1px solid var(--line);border-radius:4px;background:#fff}
@@ -166,7 +193,7 @@ table.bal th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-s
 /* phone: tabs become a bottom bar */
 .ti{display:none}
 @media (max-width:720px){
-  .tabs{position:fixed;left:0;right:0;bottom:0;margin:0;background:var(--panel);border-top:1px solid var(--line);justify-content:space-around;padding-bottom:env(safe-area-inset-bottom);z-index:7}
+  .tabs{position:fixed;left:0;right:0;bottom:0;margin:0;background:var(--chrome);justify-content:space-around;padding-bottom:env(safe-area-inset-bottom);z-index:7}
   .tab{flex:1;display:grid;justify-items:center;gap:2px;padding:8px 4px;font-size:12px;border-bottom:0;border-top:3px solid transparent}
   .tab[aria-selected="true"]{border-top-color:var(--accent)}
   .ti{display:block;font-size:20px;line-height:1}
@@ -294,6 +321,6 @@ dialog ul{padding-left:18px;margin:8px 0;max-height:50vh;overflow:auto}
 <div class="printsheet sheet" id="printsheet"></div>
 
 <script src="https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.34.js"></script>
-<script src="./webapp.js?v=1792369967"></script>
+<script src="./webapp.js?v=1792424648"></script>
 </body>
 </html>

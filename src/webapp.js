@@ -144,10 +144,10 @@ function renderRecipes() {
         const filled = num(d.q) > 0 && num(d.b) > 0;
         return `<div class="prow${filled ? " filled" : ""}" data-id="${r.id}">
           <div class="pinfo"><div class="pname">${esc(r.name)}</div><div class="psub">${esc(r.code)} · 1 batch = ${fmt(r.yieldQty)} ${esc(r.unit)}</div></div>
-          <label><span class="lbl-m">Std batches</span><input class="num" data-k="b" inputmode="decimal" enterkeyhint="next" value="${esc(fmtQty(d.b))}" aria-label="Std batches ${esc(r.name)}"></label>
-          <label class="unit"><span class="lbl-m">Output</span><input class="num" data-k="q" inputmode="decimal" enterkeyhint="next" value="${esc(fmtQty(d.q))}" aria-label="Output ${esc(r.unit)} ${esc(r.name)}"><span>${esc(r.unit)}</span></label>
-          <label><span class="lbl-m">Containers</span><input class="num" data-k="c" inputmode="numeric" enterkeyhint="next" value="${esc(fmtQty(d.c))}" aria-label="Containers ${esc(r.name)}"></label>
-          <label class="cprint"><span class="lbl-m">Print</span><input type="checkbox" class="chk" data-k="p" ${d.p ? "checked" : ""} aria-label="Print labels ${esc(r.name)}"></label>
+          <label class="cb"><span class="lbl-m">Std batches</span><input class="num" data-k="b" inputmode="decimal" enterkeyhint="next" value="${esc(fmtQty(d.b))}" aria-label="Std batches ${esc(r.name)}"></label>
+          <label class="cq"><span class="lbl-m">Output</span><span class="unit"><input class="num" data-k="q" inputmode="decimal" enterkeyhint="next" value="${esc(fmtQty(d.q))}" aria-label="Output ${esc(r.unit)} ${esc(r.name)}"><span class="u">${esc(r.unit)}</span></span></label>
+          <label class="cc"><span class="lbl-m">Containers</span><input class="num" data-k="c" inputmode="numeric" enterkeyhint="next" value="${esc(fmtQty(d.c))}" aria-label="Containers ${esc(r.name)}"></label>
+          <label class="cprint"><input type="checkbox" class="chk" data-k="p" ${d.p ? "checked" : ""} aria-label="Print labels ${esc(r.name)}"><span class="lbl-m">Print labels</span></label>
           <div class="yield${y.warn ? " warn" : ""}" data-y>${y.t}</div>
         </div>`;
       }).join("")
@@ -293,10 +293,10 @@ function renderPacking() {
     const it = items.find((x) => x.id === r.item);
     const mine = it ? batches.filter((b) => txt(b.fields["Product Code"]) === it.code).slice(0, 10) : [];
     return `<div class="krow" data-i="${i}">
-      <label class="field pick"><span>Product</span><input class="num" style="text-align:left" data-k="find" placeholder="Search code or name" autocomplete="off" value="${esc(it ? `${it.code} · ${it.name}` : r.find || "")}"><div class="menu" hidden></div></label>
-      <label class="field"><span>Split</span><input class="num" data-k="split" inputmode="decimal" value="${esc(fmtQty(r.split))}"></label>
-      <label class="field"><span>Labels</span><input class="num" data-k="labels" inputmode="numeric" value="${esc(fmtQty(r.labels))}"></label>
-      <label class="field"><span>Qty</span><input class="num" data-k="qty" inputmode="decimal" value="${esc(fmtQty(r.qty))}"></label>
+      <label class="field pick kpick"><span>Product</span><input class="num" style="text-align:left" data-k="find" placeholder="Search code or name" autocomplete="off" value="${esc(it ? `${it.code} · ${it.name}` : r.find || "")}"><div class="menu" hidden></div></label>
+      <label class="field ksplit"><span>Split</span><input class="num" data-k="split" inputmode="decimal" value="${esc(fmtQty(r.split))}"></label>
+      <label class="field klabels"><span>Labels</span><input class="num" data-k="labels" inputmode="numeric" value="${esc(fmtQty(r.labels))}"></label>
+      <label class="field kqty"><span>Qty</span><input class="num" data-k="qty" inputmode="decimal" value="${esc(fmtQty(r.qty))}"></label>
       <label class="field kbatch"><span>Batch</span><select class="num" data-k="batch"><option value="">Latest (auto)</option>${mine.map((b) => `<option value="${b.record_id}" ${b.record_id === r.batch ? "selected" : ""}>${esc(txt(b.fields["Lot Code"]) || txt(b.fields["Batch No"]))} · ${esc(txt(b.fields["Prod Date (label)"]).slice(0, 5))}</option>`).join("")}</select></label>
       <button class="x" data-del aria-label="Remove row">×</button>
       <div class="rowinfo">${rowInfo(r)}</div>
