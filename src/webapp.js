@@ -97,6 +97,7 @@ function show(t) {
   $("bar").hidden = t === "labels" || t === "today" || t === "ck";
   if (t === "ck" && booted) loadCk();
   if (t === "repack" && booted) repack.load().catch(() => {});
+  if (t === "pack" && booted) ck.load().then(renderPacking).catch(() => {});
   if (t === "labels") loadRecent();
   if (t === "today" && booted) loadDay();
   if (t === "wms" && booted) wms.load().catch(() => {});
@@ -268,9 +269,15 @@ async function getRecords(table, ids) {
 let items = [];
 let batches = []; // recent production batches, for the optional batch pick
 let outlet = OUTLETS.includes(store.get("gik.outlet", "")) ? store.get("gik.outlet", "") : "";
-let krows = store.get("gik.pack", [{}]);
-// Drafts from the "Pack size × Packs" version: keep the total.
-for (const r of krows) { if (r.labels != null && r.qty == null && num(r.split) > 0) r.qty = num(r.split) * Math.max(1, num(r.labels)); delete r.labels; }
+// Pengiriman sheet draft: itemId -> { qty, split, batch } (batch = production batch record, "" = oldest at CK).
+let sdraft = store.get("gik.ship", null);
+if (!sdraft) {
+  // From the older add-a-row version.
+  sdraft = {};
+  for (const r of store.get("gik.pack", [])) if (r.item && (num(r.qty) > 0 || (num(r.split) > 0 && num(r.labels) > 0))) sdraft[r.item] = { qty: r.qty ?? num(r.split) * Math.max(1, num(r.labels)), split: r.split, batch: r.batch || "" };
+}
+let shipFilled = false;
+let shipCat = "all"; // all | fg | wip
 // Only finished goods and WIP go to outlets. FG ride in containers of 5 or 10 pcs; WIP in any weight.
 const SHIP_CATS = ["Finished Goods", "Work In Process"];
 const FG_SIZES = [5, 10];
@@ -311,86 +318,99 @@ const calcText = (c, unit) => !c.total ? "" : c.last
   ? `${c.count - 1} × ${fmt(c.net)} + 1 × ${fmt(c.last)} ${unit}`
   : `${c.count} × ${fmt(c.net)} ${unit}`;
 
-function rowInfo(r) {
-  const it = items.find((i) => i.id === r.item);
-  if (!it) return "Pick a finished good or WIP";
-  const c = rowCalc(r);
-  if (!c.total) return `Enter the qty to send in ${esc(it.unit)}`;
-  return `${esc(calcText(c, it.unit))} = <b>${fmt(c.total)} ${esc(it.unit)}</b> · <b>${c.count}</b> label(s)`;
-}
-
 function sizeField(r, it) {
   if (isFG(it)) {
-    return `<div class="field ksplit"><span>Per container</span><div class="seg">${FG_SIZES.map((n) => `<button type="button" class="segb" data-size="${n}" aria-pressed="${num(r.split) === n}">${n} pcs</button>`).join("")}</div></div>`;
+    return `<div class="cs"><span class="lbl-m">Per container</span><div class="seg">${FG_SIZES.map((n) => `<button type="button" class="segb" data-size="${n}" aria-pressed="${num(r.split || 10) === n}">${n}</button>`).join("")}</div></div>`;
   }
-  return `<label class="field ksplit"><span>Per container</span><span class="unit"><input class="num" data-k="split" inputmode="decimal" enterkeyhint="done" placeholder="all" value="${esc(fmtQty(r.split))}">${it ? `<span class="u">${esc(it.unit)}</span>` : ""}</span></label>`;
+  return `<label class="cs"><span class="lbl-m">Per container (${esc(it.unit)})</span><span class="unit"><input class="num" data-k="split" inputmode="decimal" enterkeyhint="done" placeholder="all" value="${esc(fmtQty(r.split))}" aria-label="Per container ${esc(it.name)}"><span class="u">${esc(it.unit)}</span></span></label>`;
+}
+
+// Batches CK still holds for the item (production lots), oldest first; else the latest production batches.
+function shipLots(it) {
+  if (ck.get().at) return ck.lots(it.code).filter((x) => x.rec).map((x) => ({ id: x.rec, text: `${x.lot} · exp ${x.exp || "-"} · sisa ${fmt(x.left)}` }));
+  return batches.filter((b) => txt(b.fields["Product Code"]) === it.code).slice(0, 10).map((b) => ({ id: b.record_id, text: `${txt(b.fields["Lot Code"]) || txt(b.fields["Batch No"])} · ${txt(b.fields["Prod Date (label)"]).slice(0, 5)}` }));
+}
+const shipItems = () => items.filter((it) => SHIP_CATS.includes(it.cat)).sort((a, b) => a.name.localeCompare(b.name));
+const draftOf = (it) => ({ split: isFG(it) ? 10 : "", ...(sdraft[it.id] || {}) });
+
+function shipRowHtml(it) {
+  const r = draftOf(it);
+  const c = rowCalc(r);
+  const st = ck.item(it.code);
+  const lots = shipLots(it);
+  const over = st && c.total > st.left + 0.0001;
+  return `<div class="prow srow${c.total ? " filled" : ""}" data-id="${it.id}">
+    <div class="pinfo"><div class="pname">${esc(it.name)}</div><div class="psub">${esc(it.code)}${st ? ` · stok CK <b class="${st.left < 0.0001 ? "danger" : ""}">${fmt(st.left)} ${esc(st.unit || it.unit)}</b>` : ""}</div></div>
+    <label class="cq"><span class="lbl-m">Qty to send (${esc(it.unit)})</span><span class="unit"><input class="num" data-k="qty" inputmode="decimal" enterkeyhint="next" value="${esc(fmtQty(r.qty))}" aria-label="Qty to send ${esc(it.name)}"><span class="u">${esc(it.unit)}</span></span></label>
+    ${sizeField(r, it)}
+    <label class="cbt"><span class="lbl-m">Batch</span><select class="num" data-k="batch" aria-label="Batch ${esc(it.name)}"><option value="">${lots.length ? "Oldest first (auto)" : "Latest (auto)"}</option>${lots.map((b) => `<option value="${esc(b.id)}" ${b.id === r.batch ? "selected" : ""}>${esc(b.text)}</option>`).join("")}</select></label>
+    <div class="slbl" data-lbl>${c.total ? `<b>${c.count}</b> lbl` : ""}</div>
+    <div class="scalc" data-calc ${c.total ? "" : "hidden"}>${c.total ? `${esc(calcText(c, it.unit))} = <b>${fmt(c.total)} ${esc(it.unit)}</b>${over ? ` · <span class="danger">more than CK stock</span>` : ""}` : ""}</div>
+  </div>`;
 }
 
 function renderPacking() {
   renderOutlets();
-  $("krows").innerHTML = krows.map((r, i) => {
-    const it = items.find((x) => x.id === r.item);
-    const mine = it ? batches.filter((b) => txt(b.fields["Product Code"]) === it.code).slice(0, 10) : [];
-    return `<div class="krow" data-i="${i}">
-      <label class="field pick kpick"><span>Product</span><input class="num" style="text-align:left" data-k="find" placeholder="Search code or name" autocomplete="off" value="${esc(it ? `${it.code} · ${it.name}` : r.find || "")}"><div class="menu" hidden></div></label>
-      <label class="field kqty"><span>Qty to send</span><span class="unit"><input class="num" data-k="qty" inputmode="decimal" enterkeyhint="next" value="${esc(fmtQty(r.qty))}">${it ? `<span class="u">${esc(it.unit)}</span>` : ""}</span></label>
-      ${sizeField(r, it)}
-      <label class="field kbatch"><span>Batch</span><select class="num" data-k="batch"><option value="">Latest (auto)</option>${mine.map((b) => `<option value="${b.record_id}" ${b.record_id === r.batch ? "selected" : ""}>${esc(txt(b.fields["Lot Code"]) || txt(b.fields["Batch No"]))} · ${esc(txt(b.fields["Prod Date (label)"]).slice(0, 5))}</option>`).join("")}</select></label>
-      <button class="x" data-del aria-label="Remove row">×</button>
-      <div class="rowinfo">${rowInfo(r)}</div>
-    </div>`;
-  }).join("");
+  $("scats").innerHTML = [["all", "Semua"], ["fg", "Finished goods"], ["wip", "WIP"]].map(([k, t]) => `<button class="chip" data-cat="${k}" aria-pressed="${k === shipCat}">${t}</button>`).join("");
+  const q = $("ssearch").value.trim().toLowerCase();
+  const list = shipItems()
+    .filter((it) => shipCat === "all" || (shipCat === "fg" ? isFG(it) : !isFG(it)))
+    .filter((it) => !q || `${it.code} ${it.name}`.toLowerCase().includes(q))
+    .filter((it) => !shipFilled || rowCalc(draftOf(it)).total > 0);
+  $("slist").innerHTML = list.length ? list.map(shipRowHtml).join("") : `<p class="muted">${items.length ? "No item matches." : "Loading items…"}</p>`;
   updateBar();
 }
+function rerenderShipRow(id) {
+  const it = items.find((x) => x.id === id);
+  const el = $("slist").querySelector(`.srow[data-id="${id}"]`);
+  if (it && el) el.outerHTML = shipRowHtml(it);
+}
+function saveShip(id, patch) {
+  const it = items.find((x) => x.id === id);
+  const next = { ...draftOf(it), ...patch };
+  if (!(num(next.qty) > 0) && !next.batch && (isFG(it) ? num(next.split) === 10 : !num(next.split))) delete sdraft[id];
+  else sdraft[id] = next;
+  store.set("gik.ship", sdraft);
+}
 
-function saveRows() { store.set("gik.pack", krows); }
-
-$("krows").addEventListener("input", (e) => {
-  const row = e.target.closest(".krow");
-  if (!row) return;
-  const i = +row.dataset.i;
+$("slist").addEventListener("input", (e) => {
+  const row = e.target.closest(".srow");
   const k = e.target.dataset.k;
-  if (k === "find") {
-    krows[i] = { ...krows[i], find: e.target.value, item: "" };
-    const q = e.target.value.trim().toLowerCase();
-    const menu = row.querySelector(".menu");
-    const hits = q ? items.filter((it) => SHIP_CATS.includes(it.cat) && `${it.code} ${it.name}`.toLowerCase().includes(q)).slice(0, 8) : [];
-    menu.innerHTML = hits.map((it) => `<button type="button" data-item="${it.id}"><b>${esc(it.code)}</b> · ${esc(it.name)}</button>`).join("");
-    menu.hidden = !hits.length;
-  } else {
-    krows[i] = { ...krows[i], [k]: liveQty(e.target) };
-    row.querySelector(".rowinfo").innerHTML = rowInfo(krows[i]);
-  }
-  saveRows();
+  if (!row || (k !== "qty" && k !== "split")) return;
+  saveShip(row.dataset.id, { [k]: liveQty(e.target) });
+  // Update this row in place so the keyboard stays on the box.
+  const it = items.find((x) => x.id === row.dataset.id);
+  const r = draftOf(it);
+  const c = rowCalc(r);
+  const st = ck.item(it.code);
+  row.classList.toggle("filled", c.total > 0);
+  row.querySelector("[data-lbl]").innerHTML = c.total ? `<b>${c.count}</b> lbl` : "";
+  const calc = row.querySelector("[data-calc]");
+  calc.hidden = !c.total;
+  calc.innerHTML = c.total ? `${esc(calcText(c, it.unit))} = <b>${fmt(c.total)} ${esc(it.unit)}</b>${st && c.total > st.left + 0.0001 ? ` · <span class="danger">more than CK stock</span>` : ""}` : "";
   updateBar();
 });
-$("krows").addEventListener("click", (e) => {
-  const row = e.target.closest(".krow");
-  if (!row) return;
-  const i = +row.dataset.i;
-  const pick = e.target.closest("[data-item]");
-  const size = e.target.closest("[data-size]");
-  if (size) {
-    krows[i] = { ...krows[i], split: +size.dataset.size };
-    saveRows();
-    renderPacking();
-  } else if (pick) {
-    const it = items.find((x) => x.id === pick.dataset.item);
-    const keep = FG_SIZES.includes(num(krows[i].split)) ? num(krows[i].split) : 10;
-    krows[i] = { ...krows[i], item: pick.dataset.item, find: "", batch: "", split: isFG(it) ? keep : "" };
-    saveRows();
-    renderPacking();
-    row.parentElement.querySelector(`.krow[data-i="${i}"] [data-k="qty"]`)?.focus();
-  } else if (e.target.closest("[data-del]")) {
-    krows.splice(i, 1);
-    if (!krows.length) krows.push({});
-    saveRows();
-    renderPacking();
-  }
+$("slist").addEventListener("change", (e) => {
+  const row = e.target.closest(".srow");
+  if (!row || e.target.dataset.k !== "batch") return;
+  saveShip(row.dataset.id, { batch: e.target.value });
 });
-$("kadd").addEventListener("click", () => { krows.push({}); saveRows(); renderPacking(); $("krows").querySelector(".krow:last-child [data-k=find]")?.focus(); });
+$("slist").addEventListener("click", (e) => {
+  const size = e.target.closest("[data-size]");
+  if (!size) return;
+  const id = size.closest(".srow").dataset.id;
+  saveShip(id, { split: +size.dataset.size });
+  rerenderShipRow(id);
+  updateBar();
+});
+$("ssearch").addEventListener("input", renderPacking);
+$("sfilled").addEventListener("click", () => { shipFilled = !shipFilled; $("sfilled").setAttribute("aria-pressed", String(shipFilled)); renderPacking(); });
+$("scats").addEventListener("click", (e) => { const b = e.target.closest("[data-cat]"); if (b) { shipCat = b.dataset.cat; renderPacking(); } });
+$("sclear").addEventListener("click", () => { if (Object.keys(sdraft).length && confirm("Clear every qty on the sheet?")) { sdraft = {}; store.set("gik.ship", sdraft); renderPacking(); } });
 
-function packRows() { return krows.filter((r) => r.item && rowCalc(r).total > 0); }
+function packRows() {
+  return shipItems().map((it) => ({ item: it.id, ...draftOf(it) })).filter((r) => rowCalc(r).total > 0);
+}
 
 async function submitPacking() {
   const rows = packRows();
@@ -406,9 +426,9 @@ async function submitPacking() {
     }),
   });
   const ids = created.records.map((x) => x.record_id);
-  krows = [{}];
-  saveRows();
-  renderPacking();
+  for (const r of rows) delete sdraft[r.item];
+  store.set("gik.ship", sdraft);
+  ck.load(true).catch(() => {}).finally(renderPacking);
   status(`✅ Pengiriman saved: ${ids.length} product(s) → ${esc(outlet)}.`, "ok");
   if ($("kprint").checked) {
     const recs = await getRecords("packing", ids);
@@ -838,7 +858,7 @@ renderPacking();
     await signIn();
     booted = true;
     status("");
-    await Promise.all([loadRecipes(), loadItems(), loadBatches().then(renderPacking), tab === "today" ? loadDay() : null, tab === "wms" ? wms.load() : null, tab === "repack" ? repack.load() : null, tab === "ck" ? loadCk() : null]);
+    await Promise.all([loadRecipes(), loadItems(), loadBatches().then(renderPacking), tab === "today" ? loadDay() : null, tab === "wms" ? wms.load() : null, tab === "repack" ? repack.load() : null, tab === "ck" ? loadCk() : null, tab === "pack" ? ck.load().then(renderPacking) : null]);
   } catch (e) {
     status(`Sign-in or loading failed: ${esc(e.message)}. Open this app from Lark Workplace.`);
   }

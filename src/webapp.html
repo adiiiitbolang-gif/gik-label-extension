@@ -51,6 +51,9 @@ main{max-width:1100px;margin:0 auto;padding:14px 16px 120px}
   .prow .pinfo{grid-area:info}
   .prow .yield{grid-area:yield;align-self:start}
   .prow .cb{grid-area:b}.prow .cq{grid-area:q}.prow .cc{grid-area:c}
+  .prow.srow{grid-template-columns:repeat(3,minmax(0,1fr));grid-template-areas:"info info lbl" "q s s" "bt bt bt" "calc calc calc"}
+  .srow .slbl{grid-area:lbl;align-self:start}.srow .cs{grid-area:s}.srow .cbt{grid-area:bt}.prow.srow .scalc{grid-area:calc}
+  .srow .segb,.srow .seg{height:48px}
   .lbl-m{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;white-space:nowrap}
   .prow .num{height:48px;font-size:17px}
   .chk{justify-self:start}
@@ -69,6 +72,12 @@ main{max-width:1100px;margin:0 auto;padding:14px 16px 120px}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 .krow{display:grid;grid-template-columns:minmax(0,1fr) 84px 84px 84px minmax(0,150px) 40px;gap:8px;align-items:end;padding:10px 0;border-top:1px solid var(--line)}
 .krow:first-child{border-top:0}
+/* pengiriman sheet: same rows as Produksi, own columns */
+.shead,.srow{grid-template-columns:minmax(0,1fr) 120px 130px minmax(0,190px) 56px}
+.srow .slbl{text-align:right;font-variant-numeric:tabular-nums}
+.srow .scalc{grid-column:1/-1;font-size:13px;color:var(--muted)}
+.srow .seg{height:42px}
+.srow .segb{height:42px}
 #ckfilter{margin-bottom:8px}
 .ckrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
 .ckrow .q{text-align:right;font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -304,13 +313,17 @@ dialog ul{padding-left:18px;margin:8px 0;max-height:50vh;overflow:auto}
   <section id="v-pack" data-view="pack" hidden>
     <div class="card">
       <div class="field"><span>Kirim ke outlet</span><div class="chips" id="outlets"></div></div>
-      <p class="muted">Finished goods & WIP only. FG: 5 or 10 pcs per container, the rest goes in one smaller container.</p>
+      <p class="muted">Finished goods & WIP. FG: 5 or 10 pcs per container; WIP: any weight (empty = 1 container). The rest goes in one smaller container with its own label.</p>
     </div>
-    <div class="card" id="krows"></div>
     <div class="toolbar">
-      <button id="kadd" class="ghost">+ Add item</button>
+      <input id="ssearch" class="search" type="search" placeholder="Search item or code" autocomplete="off">
+      <button id="sfilled" class="chip" aria-pressed="false">Filled only</button>
+      <button id="sclear" class="chip">Clear all</button>
       <label class="chip" style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="kprint" checked> Print labels</label>
     </div>
+    <div class="chips" id="scats" style="margin-bottom:10px"></div>
+    <div class="sheet-head shead"><span>Item</span><span>Qty to send</span><span>Per container</span><span>Batch</span><span style="text-align:right">Labels</span></div>
+    <div id="slist"></div>
   </section>
 
   <section id="v-repack" data-view="repack" hidden>
