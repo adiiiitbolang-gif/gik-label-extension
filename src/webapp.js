@@ -1,4 +1,4 @@
-import { esc, encodeLine, parseLabelData, sheetHtml, injectLabelCss } from "./labels.js";
+import { esc, encodeLine, parseLabelData, sheetHtml, injectLabelCss, qrLink } from "./labels.js";
 import { drawLabel, canvasToFile } from "./labelImage.js";
 import { setupDirectPrint } from "./directPrint.js";
 import { createWms } from "./wms.js";
@@ -206,9 +206,32 @@ function batchLine(rec) {
     storage: txt(f.Storage),
     allergens: txt(f.Allergens),
     dest: "",
+    qr: qrLink("b", rec.record_id),
   };
   return encodeLine(v, containers || 1);
 }
+
+// Pengiriman labels from Packing Lines rows. QR = the production batch the goods came from
+// (the picked batch, else the batch the Base chose as "Batch Used"), or the packing row if it isn't loaded.
+const PACK_FIELDS = ["Item Name", "Item Code", "Batch Used", "Batch (optional)", "Prod (label)", "Exp (label)", "Container Net", "Unit", "Storage", "Label Count", "Total Qty", "Outlet", "Packing Ref", "Packing Date", "Created By"];
+function packLine(rec) {
+  const f = rec.fields;
+  const count = Math.max(1, num(f["Label Count"]));
+  const net = num(f["Container Net"]);
+  const total = num(f["Total Qty"]);
+  const unit = txt(f.Unit);
+  const lot = txt(f["Batch Used"]);
+  const linked = (Array.isArray(f["Batch (optional)"]) ? f["Batch (optional)"].flatMap((x) => x.record_ids || []) : [])[0];
+  const src = linked || batches.find((b) => (txt(b.fields["Lot Code"]) || txt(b.fields["Batch No"])) === lot)?.record_id;
+  const last = Math.round((total - net * (count - 1)) * 1000) / 1000;
+  const v = {
+    name: txt(f["Item Name"]), code: txt(f["Item Code"]), batch: lot, prod: txt(f["Prod (label)"]), exp: txt(f["Exp (label)"]),
+    run: "", net: `${fmt(net)} ${unit}`, storage: txt(f.Storage), allergens: "", dest: txt(f.Outlet),
+    qr: src ? qrLink("b", src) : qrLink("p", rec.record_id),
+  };
+  return encodeLine(v, count, count > 1 && last > 0 && last < net ? `${fmt(last)} ${unit}` : "");
+}
+const packData = (rows) => rows.map(packLine).join("^");
 
 async function submitProduction() {
   const rows = prodRows();
@@ -387,7 +410,7 @@ async function submitPacking() {
   status(`✅ Pengiriman saved: ${ids.length} product(s) → ${esc(outlet)}.`, "ok");
   if ($("kprint").checked) {
     const recs = await getRecords("packing", ids);
-    openLabels(recs.map((r) => txt(r.fields["Label Line"])).filter(Boolean).join("^"), `Pengiriman → ${outlet}`);
+    openLabels(packData(recs), `Pengiriman → ${outlet}`);
   }
 }
 
@@ -460,16 +483,35 @@ function labelList(data) {
   return out;
 }
 
+let lblList = [];
+let lblAt = 0;
+function showLabel(k) {
+  if (!lblList.length) return;
+  lblAt = (k + lblList.length) % lblList.length;
+  const l = lblList[lblAt];
+  $("lone").replaceChildren(drawLabel(l.v, l.i, l.total));
+  $("lpos").textContent = `Label ${lblAt + 1} of ${lblList.length}`;
+  $("lprev").disabled = $("lnext").disabled = lblList.length < 2;
+}
+$("lprev").addEventListener("click", () => showLabel(lblAt - 1));
+$("lnext").addEventListener("click", () => showLabel(lblAt + 1));
+$("lblclose").addEventListener("click", () => ($("lblset").hidden = true));
+
 function openLabels(data, title) {
   labelData = data;
-  const list = labelList(data);
-  $("lbltitle").textContent = `${title} · ${list.length} label(s)`;
-  $("previews").innerHTML = "";
-  list.slice(0, 40).forEach((l) => $("previews").appendChild(drawLabel(l.v, l.i, l.total)));
-  $("lblnote").hidden = true;
-  $("lblset").hidden = !list.length;
-  $("printsheet").innerHTML = parseLabelData(data).map((g) => sheetHtml(g.v, g.count, g.lastNet)).join("");
-  $("printnow").hidden = inLark && isMobile; // Lark's phone webview has no print dialog
+  lblList = labelList(data);
+  const groups = parseLabelData(data);
+  $("lbltitle").textContent = title;
+  $("lblsub").textContent = `${lblList.length} label(s) · ${groups.length} item(s)`;
+  $("llist").innerHTML = groups.map((g) => {
+    const n = Math.max(1, g.count);
+    const split = g.lastNet && g.lastNet !== g.v.net && n > 1 ? `${n - 1} × ${g.v.net} + 1 × ${g.lastNet}` : `${n} × ${g.v.net || "-"}`;
+    return `<li><b>${esc(g.v.name)}</b><span>${esc(split)}</span></li>`;
+  }).join("");
+  showLabel(0);
+  lblNote("");
+  $("lblset").hidden = !lblList.length;
+  $("printsheet").innerHTML = groups.map((g) => sheetHtml(g.v, g.count, g.lastNet)).join("");
   show("labels");
   window.scrollTo(0, 0);
 }
@@ -493,25 +535,44 @@ $("openext").addEventListener("click", async () => {
 });
 $("printnow").addEventListener("click", () => window.print());
 
+// One main button for this device; the rest go under "More ways to print".
+//   Chrome with Bluetooth/Serial: straight to the XP-4601B.   Lark on a phone (no printing there): open in Chrome.
+//   Anything else (PC, tablet browser): the print dialog with 50 × 30 mm paper.
+
 // Outside Lark (Chrome): print straight to the XP-4601B over Bluetooth, no printer app needed.
 if (!inLark) {
   setupDirectPrint({
     btn: $("direct"), pickBtn: $("pick"), bleBtn: $("ble"), more: $("directMore"), note: $("directNote"),
     getCanvases: () => labelList(labelData).map((l) => drawLabel(l.v, l.i, l.total)),
   });
-  if (!$("direct").hidden) $("openext").hidden = true;
-  else $("openext").textContent = "Open print page";
+  if (!$("direct").hidden) {
+    $("openext").hidden = true;
+    $("printnow").className = "ghost";
+    $("printnow").textContent = "Print with the print dialog";
+    $("lmore").prepend($("printnow"));
+  } else $("openext").hidden = true;
+} else if (isMobile) {
+  // Lark's phone webview has no print dialog and no Bluetooth: Chrome does the printing.
+  $("printnow").hidden = true;
+} else {
+  // Lark desktop: the print dialog works; Chrome is the fallback.
+  $("openext").className = "ghost";
+  $("lmore").prepend($("openext"));
 }
 
 async function loadRecent() {
   try {
     await loadBatches();
     $("recentB").innerHTML = batches.slice(0, 15).map((b) => `<div class="lrow"><div class="t"><b>${esc(txt(b.fields["Product Name"]))}</b><span class="muted">${esc(txt(b.fields["Lot Code"]) || txt(b.fields["Batch No"]))} · ${esc(txt(b.fields["Label Batch Line"]))} · ${esc(txt(b.fields["Prod Date (label)"]))}</span></div><button class="ghost" data-b="${b.record_id}">Labels</button></div>`).join("") || `<p class="muted">No batches yet.</p>`;
-    const packs = await searchAll("packing", { field_names: ["Packing Ref", "Outlet", "Packing Summary", "Packing Label Data", "Created At"], sort: [{ field_name: "Created At", desc: true }], automatic_fields: false });
-    const seen = new Map();
-    for (const p of packs) { const ref = txt(p.fields["Packing Ref"]); if (ref && !seen.has(ref)) seen.set(ref, p); if (seen.size >= 15) break; }
-    $("recentP").innerHTML = [...seen.values()].map((p) => `<div class="lrow"><div class="t"><b>${esc(txt(p.fields.Outlet))} · ${esc(txt(p.fields["Packing Ref"]))}</b><span class="muted">${esc(txt(p.fields["Packing Summary"]).split("\n").join(" · "))}</span></div><button class="ghost" data-p="${p.record_id}">Labels</button></div>`).join("") || `<p class="muted">No packing yet.</p>`;
-    recentPacks = Object.fromEntries([...seen.values()].map((p) => [p.record_id, p]));
+    const packs = await searchAll("packing", { field_names: [...PACK_FIELDS, "Created At"], sort: [{ field_name: "Created At", desc: true }], automatic_fields: false });
+    const groups = new Map();
+    for (const p of packs) {
+      const ref = txt(p.fields["Packing Ref"]) || p.record_id;
+      if (!groups.has(ref)) { if (groups.size >= 15) break; groups.set(ref, []); }
+      groups.get(ref).push(p);
+    }
+    recentPacks = [...groups.entries()].map(([ref, rows]) => ({ ref, rows }));
+    $("recentP").innerHTML = recentPacks.map((g, k) => `<div class="lrow"><div class="t"><b>${esc(txt(g.rows[0].fields.Outlet))} · ${esc(g.ref)}</b><span class="muted">${esc(g.rows.map((r) => `${txt(r.fields["Item Name"])} ${fmt(num(r.fields["Total Qty"]))} ${txt(r.fields.Unit)}`).join(" · "))}</span></div><button class="ghost" data-p="${k}">Labels</button></div>`).join("") || `<p class="muted">No pengiriman yet.</p>`;
     const reps = await searchAll("repack", { field_names: ["Repack Ref", "Location", "Item Name", "Total Qty", "Unit", "Packs", "Label Line", "Repack Date"], sort: [{ field_name: "Repack Date", desc: true }], automatic_fields: false });
     recentReps = groupRepacks(reps).slice(0, 15);
     $("recentR").innerHTML = recentReps.map((g, k) => `<div class="lrow"><div class="t"><b>${esc(g.loc)} · ${esc(g.ref)}</b><span class="muted">${esc(g.rows.map((r) => `${txt(r.fields["Item Name"])} ${fmt(num(r.fields["Total Qty"]))} ${txt(r.fields.Unit)}`).join(" · "))}</span></div><button class="ghost" data-r="${k}">Labels</button></div>`).join("") || `<p class="muted">No repacking yet.</p>`;
@@ -519,7 +580,7 @@ async function loadRecent() {
     $("recentB").innerHTML = `<p class="note">Could not load: ${esc(e.message)}</p>`;
   }
 }
-let recentPacks = {};
+let recentPacks = [];
 let recentReps = [];
 // Repack Lines grouped by submission (Repack Ref), newest first as fetched.
 function groupRepacks(rows) {
@@ -536,7 +597,7 @@ $("v-labels").addEventListener("click", (e) => {
   const b = e.target.closest("[data-b]");
   const p = e.target.closest("[data-p]");
   if (b) { const rec = batches.find((x) => x.record_id === b.dataset.b); if (rec) openLabels(batchLine(rec), txt(rec.fields["Product Name"])); }
-  if (p) { const rec = recentPacks[p.dataset.p]; if (rec) openLabels(txt(rec.fields["Packing Label Data"]), `Pengiriman → ${txt(rec.fields.Outlet)}`); }
+  if (p) { const g = recentPacks[+p.dataset.p]; if (g) openLabels(packData(g.rows), `Pengiriman → ${txt(g.rows[0].fields.Outlet)}`); }
   const rp = e.target.closest("[data-r]");
   if (rp) { const g = recentReps[+rp.dataset.r]; if (g) openLabels(repackData(g), `Repack · ${g.loc}`); }
 });
@@ -579,7 +640,7 @@ async function loadDay() {
   try {
     const [b, p, rp] = await Promise.all([
       fetchDay("batches", ["Batch No", "Lot Code", "Product Name", "Product Code", "Prod Date (label)", "Expiry (label)", "Label Batch Line", "Label Net", "Actual Output Qty", "Unit", "Storage", "Allergens", "Containers (labels)", "Production Date", "Recipe Runs (batch)", "Yield %", "Created By"], "Production Date", start, end),
-      fetchDay("packing", ["Item Name", "Item Code", "Outlet", "Total Qty", "Unit", "Label Count", "Container Net", "Packing Ref", "Packing Date", "Created By", "Label Line"], "Packing Date", start, end),
+      fetchDay("packing", PACK_FIELDS, "Packing Date", start, end),
       fetchDay("repack", ["Repack Ref", "Location", "Item Name", "Item Code", "Total Qty", "Unit", "Packs", "Pack Size", "Last Pack", "Label Line", "Repack Date", "Created By"], "Repack Date", start, end).catch(() => []),
     ]);
     dayData = { batches: b, packs: p, reps: rp };
@@ -682,7 +743,7 @@ $("v-today").addEventListener("click", (e) => {
   const pref = e.target.closest("[data-pref]");
   if (pref) {
     const rows = dayData.packs.filter((r) => (txt(r.fields["Packing Ref"]) || r.record_id) === pref.dataset.pref);
-    openLabels(rows.map((r) => txt(r.fields["Label Line"])).filter(Boolean).join("^"), `Pengiriman → ${txt(rows[0].fields.Outlet)}`);
+    openLabels(packData(rows), `Pengiriman → ${txt(rows[0].fields.Outlet)}`);
   }
   const rref = e.target.closest("[data-rref]");
   if (rref) {

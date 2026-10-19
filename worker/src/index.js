@@ -28,7 +28,13 @@ const OPS = {
   create: { method: "POST", path: "records/batch_create" },
   get: { method: "POST", path: "records/batch_get" },
   fields: { method: "GET", path: "fields" },
+  update: { method: "POST", path: "records/batch_update" },
 };
+// Only these tables accept "update" (the app writes the label line after creating repack rows).
+const UPDATABLE = new Set(["repack"]);
+
+// Label QR codes: /q/<kind>/<record_id> opens that record in the Production base (short = a sparse, scannable QR).
+const QR_TABLES = { b: "tblNKpqO2NH81eZ2", p: "tblCLOQlUrKzd3dU", r: "tblcC0RUenqp0gge" };
 
 let tenantCache = { token: "", exp: 0 };
 let ticketCache = { ticket: "", exp: 0 };
@@ -163,7 +169,7 @@ async function api(request, env, url) {
     const table = TABLES[m[1]];
     const op = OPS[m[2]];
     const token = request.headers.get("x-lark-token");
-    if (!table || !op) return json({ code: 404, msg: "unknown table or operation" }, 404);
+    if (!table || !op || (m[2] === "update" && !UPDATABLE.has(m[1]))) return json({ code: 404, msg: "unknown table or operation" }, 404);
     if (!token) return json({ code: 401, msg: "not signed in" }, 401);
     const qs = new URLSearchParams();
     for (const k of ["page_size", "page_token", "user_id_type"]) if (url.searchParams.has(k)) qs.set(k, url.searchParams.get(k));
@@ -180,6 +186,11 @@ async function api(request, env, url) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    const q = url.pathname.match(/^\/q\/([bpr])\/(rec\w{4,40})$/);
+    if (q) {
+      const target = `https://${env.BASE_HOST}/base/${env.BASE_TOKEN}?table=${QR_TABLES[q[1]]}&record=${q[2]}`;
+      return Response.redirect(target, 302);
+    }
     if (url.pathname.startsWith("/api/")) {
       try {
         return await api(request, env, url);

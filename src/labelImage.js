@@ -1,5 +1,5 @@
 import qrcode from "qrcode-generator";
-import { codeLine } from "./labels.js";
+import { batchQty, dateLine } from "./labels.js";
 
 // Draws one 50 x 30 mm label as a PNG for thermal-printer apps (share sheet / save).
 // 203 dpi is the common thermal head resolution: 50 mm = 400 px, 30 mm = 240 px.
@@ -47,7 +47,18 @@ function clip(ctx, text, maxWidth) {
   return t;
 }
 
-// v: { name, code, batch, prod, exp, run, net, storage, allergens, dest }
+// Largest font (bold or not) from `max` down to `min` px that fits the width.
+function fit(ctx, text, maxWidth, max, min, bold) {
+  for (let px = max; px >= min; px--) {
+    ctx.font = `${bold ? "bold " : ""}${px}px ${FONT}`;
+    if (ctx.measureText(text).width <= maxWidth) return px;
+  }
+  return min;
+}
+
+// Same layout as labelHtml (labels.js): name on top; batch · qty, Prod/Repack date, big EXP on the left;
+// QR (link to the source record) on the right; storage tag + count at the bottom.
+// v: { name, code, batch, prod, exp, run, net, storage, qr }
 export function drawLabel(v, i, total) {
   const canvas = document.createElement("canvas");
   canvas.width = W;
@@ -58,49 +69,54 @@ export function drawLabel(v, i, total) {
   ctx.fillStyle = "#000";
   ctx.textBaseline = "top";
 
-  // Product name: up to 2 lines, then a rule.
-  ctx.font = `bold 26px ${FONT}`;
+  // 1. Item name: up to 2 lines across the full width, then a rule.
+  ctx.font = `bold 27px ${FONT}`;
   const nameLines = fitLines(ctx, v.name, W - PAD * 2, 2);
   let y = PAD;
   for (const l of nameLines) {
     ctx.fillText(l, PAD, y);
-    y += 28;
+    y += 29;
   }
-  ctx.fillRect(PAD, y + 2, W - PAD * 2, 2);
-  y += 10;
+  ctx.fillRect(PAD, y + 1, W - PAD * 2, 3);
+  y += 12;
 
-  const qrSize = 104;
+  const qrSize = 120;
   const qrX = W - PAD - qrSize;
-  const textW = qrX - PAD - 6;
+  const textW = qrX - PAD - 10;
+  const bodyTop = y;
 
+  // 2. Batch · qty   3. Prod / Repack date   4. EXP (largest)
+  const bq = batchQty(v);
+  fit(ctx, bq, textW, 21, 14, true);
+  ctx.fillText(clip(ctx, bq, textW), PAD, y);
+  y += 27;
+  const dl = dateLine(v);
+  fit(ctx, dl, textW, 21, 14, false);
+  ctx.fillText(clip(ctx, dl, textW), PAD, y);
+  y += 27;
+  const ex = `EXP ${v.exp || "-"}`;
+  fit(ctx, ex, textW, 32, 18, true);
+  ctx.fillText(clip(ctx, ex, textW), PAD, y);
+
+  // Storage tag (white on black) and label count along the bottom.
+  const footY = H - PAD - 26;
+  if (v.storage) {
+    ctx.font = `bold 18px ${FONT}`;
+    const tag = String(v.storage).toUpperCase();
+    const tw = Math.min(textW - 50, ctx.measureText(tag).width + 16);
+    ctx.fillRect(PAD, footY, tw, 26);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(clip(ctx, tag, tw - 16), PAD + 8, footY + 4);
+    ctx.fillStyle = "#000";
+  }
   ctx.font = `bold 17px ${FONT}`;
-  ctx.fillText(clip(ctx, codeLine(v), textW), PAD, y);
-  y += 21;
-  if (v.run) {
-    ctx.font = `bold 17px ${FONT}`;
-    ctx.fillText(clip(ctx, v.run, textW), PAD, y);
-    y += 21;
-  }
-  ctx.font = `17px ${FONT}`;
-  ctx.fillText(clip(ctx, `Prod ${v.prod}`, textW), PAD, y);
-  y += 22;
-  ctx.font = `bold 24px ${FONT}`;
-  ctx.fillText(clip(ctx, `EXP ${v.exp}`, textW), PAD, y);
+  ctx.textAlign = "right";
+  ctx.fillText(`${i}/${total}`, qrX - 10, footY + 5);
+  ctx.textAlign = "left";
 
-  // Footer: net + storage, then outlet in bold.
-  let fy = H - PAD - (v.dest ? 44 : 20);
-  ctx.font = `16px ${FONT}`;
-  const foot = `${v.net ? `Net ${v.net} · ` : ""}${String(v.storage || "").toUpperCase()}`;
-  ctx.fillText(clip(ctx, foot, textW), PAD, fy);
-  if (v.dest) {
-    ctx.font = `bold 22px ${FONT}`;
-    ctx.fillText(clip(ctx, `→ ${String(v.dest).toUpperCase()}`, textW), PAD, fy + 20);
-  }
-
-  drawQr(ctx, v.batch, qrX, H - PAD - qrSize - 18, qrSize);
-  ctx.font = `bold 15px ${FONT}`;
-  ctx.textAlign = "center";
-  ctx.fillText(`${i}/${total}`, qrX + qrSize / 2, H - PAD - 16);
+  // QR centred in the space right of the text.
+  const qrY = bodyTop + Math.max(0, (H - PAD - bodyTop - qrSize) / 2);
+  drawQr(ctx, v.qr || v.batch, qrX, qrY, qrSize);
   return canvas;
 }
 

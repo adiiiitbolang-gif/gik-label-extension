@@ -1,11 +1,16 @@
-import { esc, encodeLine } from "./labels.js";
+import { esc, encodeLine, qrLink } from "./labels.js";
 import { fmtQty, liveQty, packCalc } from "./qty.js";
 
 // Repacking: any item, re-portioned into new packs with a label each, at Central Kitchen or the warehouse.
 // Only the packaging changes, so no stock moves; each line is kept in "Repack Lines" for reprints.
-//   Central Kitchen: items from the Production base, source batch = a production batch.
-//   Gudang:          items from the WMS master, source batch = an active WMS stock batch (FIFO order).
+//   Central Kitchen: items from the Production base.   Gudang: items from the WMS master.
+// Source batch and expiry, wherever the repack happens:
+//   Finished Goods / WIP: a production batch from the Production base; its expiry is used as is.
+//   Raw materials & others: an active WMS stock batch (FIFO first); its expiry is prefilled and can be corrected.
+// Label: name · batch + qty · repack date · expiry; the QR opens the Repack Lines row.
 export const LOCATIONS = ["Central Kitchen", "Gudang"];
+const PRODUCED = ["Finished Goods", "Work In Process"];
+export const isProduced = (it) => PRODUCED.includes(it?.cat);
 
 export function createRepack({ $, base, txt, num, fmt, store, status, wms, getItems, getBatches, loadBatches, openLabels, updateBar }) {
   let loc = LOCATIONS.includes(store.get("gik.repack.loc", "")) ? store.get("gik.repack.loc", "") : "";
@@ -15,26 +20,38 @@ export function createRepack({ $, base, txt, num, fmt, store, status, wms, getIt
   const items = () => (loc === "Gudang" ? wms.data().items : getItems());
   const itemOf = (r) => items().find((x) => x.id === r.item);
 
-  // Source batches for one item, newest production first (CK) or FIFO first (Gudang).
+  // Source batches for one item: production batches (FG/WIP, newest first) or WMS stock batches (FIFO first).
   function sources(it) {
     if (!it) return [];
-    if (loc === "Gudang") {
-      return wms.data().batches
-        .filter((b) => b.item === it.id && !b.key.startsWith("OB|"))
-        .sort((a, b) => a.fifo - b.fifo)
-        .map((b) => ({ id: b.id, lot: `#${b.no}`, date: b.arr, exp: b.exp, storage: wms.data().pos.get(b.pos)?.zone || "", hint: `${b.pos} · sisa ${fmt(b.sisa)}` }));
+    if (isProduced(it)) {
+      return getBatches()
+        .filter((b) => txt(b.fields["Product Code"]) === it.code)
+        .slice(0, 10)
+        .map((b) => ({ id: b.record_id, lot: txt(b.fields["Lot Code"]) || txt(b.fields["Batch No"]), date: txt(b.fields["Prod Date (label)"]), exp: txt(b.fields["Expiry (label)"]), storage: txt(b.fields.Storage), hint: `prod ${txt(b.fields["Prod Date (label)"])}` }));
     }
-    return getBatches()
-      .filter((b) => txt(b.fields["Product Code"]) === it.code)
-      .slice(0, 10)
-      .map((b) => ({ id: b.record_id, lot: txt(b.fields["Lot Code"]) || txt(b.fields["Batch No"]), date: txt(b.fields["Prod Date (label)"]), exp: txt(b.fields["Expiry (label)"]), storage: txt(b.fields.Storage), hint: txt(b.fields["Label Batch Line"]) }));
+    const d = wms.data();
+    const wi = loc === "Gudang" ? it : d.items.find((x) => x.code === it.code);
+    if (!wi) return [];
+    return d.batches
+      .filter((b) => b.item === wi.id && !b.key.startsWith("OB|"))
+      .sort((a, b) => a.fifo - b.fifo)
+      .map((b) => ({ id: b.id, lot: `#${b.no}`, date: b.arr, exp: b.exp, storage: d.pos.get(b.pos)?.zone || "", hint: `${b.pos} · sisa ${fmt(b.sisa)}` }));
   }
   const sourceOf = (r) => sources(itemOf(r)).find((s) => s.id === r.batch);
 
+  // Both sources can be needed in either place (a CK raw material has WMS batches, a WIP at Gudang has a production batch).
   async function load() {
-    if (loc === "Gudang") await wms.load();
-    else await loadBatches();
+    await Promise.all([wms.load(), loadBatches()]);
     render();
+  }
+  const expOf = (r) => { const s = sourceOf(r); return isProduced(itemOf(r)) ? s?.exp || "" : String(r.exp ?? s?.exp ?? "").trim(); };
+  // What still stops this row from being saved, or "".
+  function missing(r) {
+    const it = itemOf(r);
+    if (!it || !(packCalc(r.qty, r.split).total > 0)) return "";
+    if (isProduced(it) && !sourceOf(r)) return "Pick the production batch (expiry comes from it)";
+    if (!expOf(r)) return "Enter the expiry date";
+    return "";
   }
 
   function info(r) {
@@ -42,6 +59,8 @@ export function createRepack({ $, base, txt, num, fmt, store, status, wms, getIt
     if (!it) return "Pick an item";
     const c = packCalc(r.qty, r.split);
     if (!c.total) return `Enter the qty to repack in ${esc(it.unit)}`;
+    const m = missing(r);
+    if (m) return `<span class="danger">${esc(m)}</span>`;
     const parts = c.last ? `${c.count - 1} × ${fmt(c.net)} + 1 × ${fmt(c.last)}` : `${c.count} × ${fmt(c.net)}`;
     return `${parts} ${esc(it.unit)} = <b>${fmt(c.total)} ${esc(it.unit)}</b> · <b>${c.count}</b> label(s)`;
   }
@@ -60,8 +79,8 @@ export function createRepack({ $, base, txt, num, fmt, store, status, wms, getIt
         <label class="field pick kpick"><span>Item</span><input class="num" style="text-align:left" data-k="find" placeholder="Search code or name" autocomplete="off" value="${esc(it ? `${it.code} · ${it.name}` : r.find || "")}"><div class="menu" hidden></div></label>
         <label class="field kqty"><span>Qty to repack</span><span class="unit"><input class="num" data-k="qty" inputmode="decimal" enterkeyhint="next" value="${esc(fmtQty(r.qty))}">${it ? `<span class="u">${esc(it.unit)}</span>` : ""}</span></label>
         <label class="field ksplit"><span>Per pack</span><span class="unit"><input class="num" data-k="split" inputmode="decimal" enterkeyhint="next" placeholder="all" value="${esc(fmtQty(r.split))}">${it ? `<span class="u">${esc(it.unit)}</span>` : ""}</span></label>
-        <label class="field kbatch"><span>Source batch</span><select class="num" data-k="batch"><option value="">${src.length ? "No batch" : "No batch found"}</option>${src.map((b, n) => `<option value="${esc(b.id)}" ${b.id === r.batch ? "selected" : ""}>${n === 0 ? "⭐ " : ""}${esc(b.lot)}${b.date ? ` · ${esc(b.date)}` : ""}${b.hint ? ` · ${esc(b.hint)}` : ""}</option>`).join("")}</select></label>
-        <label class="field kexp"><span>Expiry</span><input class="num" style="text-align:left" data-k="exp" placeholder="dd/mm/yyyy" value="${esc(r.exp ?? s?.exp ?? "")}"></label>
+        <label class="field kbatch"><span>${isProduced(it) ? "Production batch" : "Stock batch"}</span><select class="num" data-k="batch"><option value="">${src.length ? (isProduced(it) ? "Pick a batch" : "No batch") : "No batch found"}</option>${src.map((b, n) => `<option value="${esc(b.id)}" ${b.id === r.batch ? "selected" : ""}>${n === 0 ? "⭐ " : ""}${esc(b.lot)}${b.date ? ` · ${esc(b.date)}` : ""}${b.hint ? ` · ${esc(b.hint)}` : ""}</option>`).join("")}</select></label>
+        <label class="field kexp"><span>Expiry${isProduced(it) ? " (from batch)" : ""}</span><input class="num" style="text-align:left" data-k="exp" placeholder="dd/mm/yyyy" value="${esc(it ? expOf(r) : "")}" ${isProduced(it) ? "readonly" : ""}></label>
         <button class="x" data-del aria-label="Remove row">×</button>
         <div class="rowinfo">${info(r)}</div>
       </div>`;
@@ -69,13 +88,14 @@ export function createRepack({ $, base, txt, num, fmt, store, status, wms, getIt
     updateBar();
   }
 
-  function ready() { return loc ? rows.filter((r) => itemOf(r) && packCalc(r.qty, r.split).total > 0) : []; }
+  function ready() { return loc ? rows.filter((r) => itemOf(r) && packCalc(r.qty, r.split).total > 0 && !missing(r)) : []; }
 
   function bar() {
     if (!loc) return { html: `<span class="danger">Pick a location</span>`, label: "Simpan repack", disabled: true };
     const rs = ready();
     const labels = rs.reduce((t, r) => t + packCalc(r.qty, r.split).count, 0);
-    return { html: `<b>${rs.length}</b> item(s) · ${labels} label(s) · <b>${esc(loc)}</b>`, label: "Simpan repack", disabled: !rs.length };
+    const todo = rows.filter((r) => missing(r)).length;
+    return { html: `<b>${rs.length}</b> item(s) · ${labels} label(s) · <b>${esc(loc)}</b>${todo ? ` · <span class="danger">${todo} incomplete</span>` : ""}`, label: "Simpan repack", disabled: !rs.length || todo > 0 };
   }
 
   function summary() {
@@ -91,27 +111,32 @@ export function createRepack({ $, base, txt, num, fmt, store, status, wms, getIt
     const now = new Date();
     const ref = `RP-${String(now.getFullYear()).slice(2)}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
     const today = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}`;
-    const records = rs.map((r) => {
+    const rowsOut = rs.map((r) => {
       const it = itemOf(r);
       const s = sourceOf(r);
       const c = packCalc(r.qty, r.split);
-      const exp = String(r.exp ?? s?.exp ?? "").trim();
+      const exp = expOf(r);
       const storage = s?.storage || it.storage || "";
-      const v = { name: it.name, code: it.code, batch: s?.lot || ref, prod: s?.date || today, exp, run: `Repack ${today.slice(0, 5)} · ${loc}`, net: `${fmt(c.net)} ${it.unit}`, storage, allergens: "", dest: "" };
-      const line = encodeLine(v, c.count, c.last ? `${fmt(c.last)} ${it.unit}` : "");
-      return { line, fields: {
+      const v = { name: it.name, code: it.code, batch: s?.lot || ref, prod: today, exp, run: `Repack · ${loc}`, net: `${fmt(c.net)} ${it.unit}`, storage, allergens: "", dest: "" };
+      return { v, c, unit: it.unit, fields: {
         "Item Name": it.name, Location: loc, "Item Code": it.code, Unit: it.unit,
         "Pack Size": c.net, Packs: c.count, "Total Qty": c.total, ...(c.last ? { "Last Pack": c.last } : {}),
         "Lot / Batch": s?.lot || "", "Source Date": s?.date || "", Expiry: exp, Storage: storage,
-        "Repack Ref": ref, "Repack Date": now.getTime(), "Label Line": line,
+        "Repack Ref": ref, "Repack Date": now.getTime(),
       } };
     });
-    await base("repack", "create", { records: records.map((x) => ({ fields: x.fields })) });
+    const created = await base("repack", "create", { records: rowsOut.map((x) => ({ fields: x.fields })) });
+    const ids = (created.records || []).map((x) => x.record_id);
+    // The QR needs the new row's id, so the label line is written right after.
+    const lines = rowsOut.map((x, k) => encodeLine({ ...x.v, qr: qrLink("r", ids[k]) }, x.c.count, x.c.last ? `${fmt(x.c.last)} ${x.unit}` : ""));
+    if (ids.length === lines.length) {
+      try { await base("repack", "update", { records: ids.map((id, k) => ({ record_id: id, fields: { "Label Line": lines[k] } })) }); } catch { /* labels still print now; reprint needs the line */ }
+    }
     rows = [{}];
     save();
     render();
-    status(`✅ Repack saved: ${records.length} item(s) · ${esc(ref)}.`, "ok");
-    openLabels(records.map((x) => x.line).join("^"), `Repack · ${loc}`);
+    status(`✅ Repack saved: ${rowsOut.length} item(s) · ${esc(ref)}.`, "ok");
+    openLabels(lines.join("^"), `Repack · ${loc}`);
   }
 
   $("rlocs").addEventListener("click", (e) => {

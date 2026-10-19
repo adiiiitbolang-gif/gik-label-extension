@@ -3,68 +3,80 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Print Production Label</title>
+<title>Print Labels</title>
 <style>
-:root{--bg:#f6f7f5;--panel:#fff;--ink:#1f2a23;--muted:#66736a;--line:#d8dfd9;--accent:#3f7d4e;--warn-bg:#fff4e0;--warn-ink:#7a4b00;--font:"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif}
-@media (prefers-color-scheme: dark){:root{--bg:#1a1f1c;--panel:#222924;--ink:#e5ebe6;--muted:#9aa79e;--line:#34413a;--accent:#7cc08d;--warn-bg:#3a2e17;--warn-ink:#f3cf8f;color-scheme:dark}}
+:root{--bg:#f5f6f8;--panel:#fff;--ink:#1f2933;--muted:#5b6673;--line:#dde1e6;--soft:#eef0f3;--accent:#1a66d9;--accent-ink:#fff;--warn-bg:#fff4e0;--warn-ink:#7a4b00;--ok-bg:#e6f4ea;--ok-ink:#1e6b34;--font:"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif}
+@media (prefers-color-scheme: dark){:root{--bg:#12171d;--panel:#1a2129;--ink:#e6eaef;--muted:#97a3b0;--line:#2c3540;--soft:#222a33;--accent:#5b9cf5;--accent-ink:#0b1420;--warn-bg:#3a2e17;--warn-ink:#f3cf8f;--ok-bg:#1d3326;--ok-ink:#a9dcb8;color-scheme:dark}}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 var(--font)}
-.ui{max-width:560px;margin:0 auto;padding-block:16px 12px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:12px}
-h1{font-size:17px;margin:0}
-#title{font-weight:600;font-size:15px}
+.ui{max-width:520px;margin:0 auto;padding:16px max(16px,env(safe-area-inset-right,0px)) 24px max(16px,env(safe-area-inset-left,0px));display:grid;gap:12px}
+h1{font-size:18px;margin:0}
 .muted{color:var(--muted);font-size:13px}
+.view{display:grid;gap:10px}
+.navrow{display:flex;align-items:center;justify-content:center;gap:16px}
+.nav{width:44px;height:44px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);font-size:22px;cursor:pointer}
+.nav:disabled{opacity:.35}
+.paper{background:#fff;border-radius:6px;box-shadow:0 0 0 1px var(--line),0 6px 18px rgba(15,23,32,.12);overflow:hidden}
+.paper canvas{display:block;width:100%;height:auto}
+.pos{text-align:center;font-variant-numeric:tabular-nums}
+.lines{margin:0;padding:0;list-style:none;display:grid;gap:6px}
+.lines li{display:flex;justify-content:space-between;gap:10px;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:8px;font-size:14px}
+.lines li span{flex:none;color:var(--muted);font-variant-numeric:tabular-nums}
 .stepper{display:grid;grid-template-columns:56px 1fr 56px;gap:8px;align-items:center}
 .stepper button{height:52px;font:600 24px var(--font);border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
 .stepper input{height:52px;text-align:center;font:600 20px var(--font);border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);min-width:0;width:100%}
 label.f{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
-.chrome{display:flex;align-items:center;justify-content:center;height:56px;font:700 17px var(--font);border-radius:12px;background:var(--ink);color:var(--bg);text-decoration:none}
-.share{height:56px;font:700 17px var(--font);border:0;border-radius:12px;background:var(--ink);color:var(--bg);cursor:pointer}
-.direct{height:60px;font:700 18px var(--font);border:0;border-radius:12px;background:var(--accent);color:#fff;cursor:pointer}
+.primary{display:flex;align-items:center;justify-content:center;width:100%;height:56px;font:700 17px var(--font);border:0;border-radius:12px;background:var(--accent);color:var(--accent-ink);cursor:pointer;text-decoration:none}
+.ghost{height:46px;width:100%;font:600 15px var(--font);border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);cursor:pointer}
 .links{display:flex;gap:16px;justify-content:center}
 .linkbtn{border:0;background:none;color:var(--accent);font:600 14px var(--font);text-decoration:underline;cursor:pointer;padding:4px}
-.ghost{height:46px;font:600 15px var(--font);border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);cursor:pointer}
+details summary{cursor:pointer;color:var(--muted);font-weight:600;padding:6px 0}
+.more{display:grid;gap:8px;padding-top:6px}
 .savelist{display:flex;flex-wrap:wrap;gap:8px}
 .savelist a{font-size:13px;color:var(--accent)}
-#printBtn{height:56px;font:700 17px var(--font);border:0;border-radius:12px;background:var(--accent);color:#fff;cursor:pointer}
 button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .stepwrap{display:grid;gap:8px}
-.lines{margin:0;padding-left:18px;display:grid;gap:4px;font-size:14px}
 .note{background:var(--warn-bg);color:var(--warn-ink);border-radius:10px;padding:10px 12px;font-size:13px}
-.sheet{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;padding-block:4px 24px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
-.sheet .label{box-shadow:0 0 0 1px var(--line)}
+.ok{background:var(--ok-bg);color:var(--ok-ink);border-radius:10px;padding:10px 12px;font-size:13px}
+.sheet{display:none}
 </style>
 <style id="label-css"></style>
 </head>
 <body>
 <div class="ui">
-  <div>
-    <h1>Print production label</h1>
-    <div id="title"></div>
+  <div><h1 id="title">Print labels</h1><div class="muted" id="sub"></div></div>
+  <div id="empty" class="note" hidden>Open this page from a print link in Lark (a batch, pengiriman or repack).</div>
+  <div class="view" id="view">
+    <div class="paper" id="one"></div>
+    <div class="navrow"><button type="button" class="nav" id="prev" aria-label="Previous label">‹</button><span class="pos muted" id="pos"></span><button type="button" class="nav" id="next" aria-label="Next label">›</button></div>
   </div>
-  <div id="empty" class="note" hidden>Open this page from a print link in Lark (a batch or a packing).</div>
   <ul id="lineList" class="lines" hidden></ul>
   <div id="stepperWrap" class="stepwrap">
-  <label class="f" for="copies">Labels to print</label>
-  <div class="stepper">
-    <button type="button" id="minus" aria-label="One less label">−</button>
-    <input id="copies" type="number" inputmode="numeric" min="1" max="200" value="1">
-    <button type="button" id="plus" aria-label="One more label">+</button>
+    <label class="f" for="copies">Labels to print</label>
+    <div class="stepper">
+      <button type="button" id="minus" aria-label="One less label">−</button>
+      <input id="copies" type="number" inputmode="numeric" min="1" max="200" value="1">
+      <button type="button" id="plus" aria-label="One more label">+</button>
+    </div>
   </div>
-  </div>
-  <a id="chromeBtn" class="chrome" hidden>Open in Chrome to print</a>
-  <button type="button" id="directBtn" class="direct" hidden>Print to label printer</button>
-  <div id="directMore" class="links" hidden><button type="button" id="pickBtn" class="linkbtn">Choose another printer</button><button type="button" id="bleBtn" class="linkbtn">Bluetooth LE printer</button></div>
+  <a id="chromeBtn" class="primary" hidden>Open in Chrome to print</a>
+  <button type="button" id="directBtn" class="primary" hidden>Print to label printer</button>
+  <button type="button" id="printBtn" class="primary">Print</button>
   <div id="directNote" class="note" hidden></div>
-  <button type="button" id="shareBtn" class="share">Send to printer app</button>
-  <button type="button" id="printBtn">Print labels</button>
-  <button type="button" id="saveBtn" class="ghost">Save label images</button>
-  <div id="shareNote" class="note" hidden></div>
-  <div id="saveList" class="savelist" hidden></div>
-  <div id="inapp" class="note" hidden>Lark's built-in browser can't print. Tap "Open in Chrome to print" (or ⋯ → Open in browser), then press Print labels and choose your label printer.</div>
-  <div class="muted"><b>Send to printer app</b> shares 50 × 30 mm label images to your thermal printer's app. <b>Print labels</b> uses the phone/PC print dialog (set paper 50 × 30 mm, margins none).</div>
+  <div id="inapp" class="note" hidden>Lark's built-in browser can't print. Tap "Open in Chrome to print" (or ⋯ → Open in browser).</div>
+  <details id="moreBox"><summary>More ways to print</summary>
+    <div class="more" id="more">
+      <button type="button" id="shareBtn" class="ghost">Send images to printer app</button>
+      <button type="button" id="saveBtn" class="ghost">Save label images</button>
+      <div id="directMore" class="links" hidden><button type="button" id="pickBtn" class="linkbtn">Choose another printer</button><button type="button" id="bleBtn" class="linkbtn">Bluetooth LE printer</button></div>
+      <div id="shareNote" class="note" hidden></div>
+      <div id="saveList" class="savelist" hidden></div>
+      <div class="muted">Print dialog: paper 50 × 30 mm, margins none.</div>
+    </div>
+  </details>
 </div>
-<div class="sheet" id="sheet" aria-label="Label preview"></div>
-<script src="./print.js?v=1792426763"></script>
+<div class="sheet" id="sheet" aria-label="Labels for the print dialog"></div>
+<script src="./print.js?v=1792427583"></script>
 </body>
 </html>

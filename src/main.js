@@ -1,5 +1,5 @@
 import { bitable } from "@lark-base-open/js-sdk";
-import { esc, sheetHtml, injectLabelCss } from "./labels.js";
+import { esc, sheetHtml, injectLabelCss, qrLink } from "./labels.js";
 
 // Production Batches fields shown on the 50 x 30 mm label.
 const TABLE_NAME = "Production Batches";
@@ -46,6 +46,7 @@ async function loadRecord(recordId) {
       }
     })
   );
+  v.qr = qrLink("b", recordId);
   current = v;
   $("copies").value = 1;
   $("picked").textContent = `${v.batch} · ${v.name}`;

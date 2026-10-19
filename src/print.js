@@ -29,18 +29,35 @@ $("copies").value = 1;
 if (lines) {
   const total = lines.reduce((t, l) => t + l.count, 0);
   const first = lines[0]?.v || {};
-  $("title").textContent = `${first.run || "Packing"} → ${first.dest || ""} · ${lines.length} item(s), ${total} label(s)`;
+  $("title").textContent = /^repack/i.test(first.run || "") ? "Repack labels" : first.dest ? `Pengiriman → ${first.dest}` : "Production labels";
+  $("sub").textContent = `${total} label(s) · ${lines.length} item(s)`;
   $("stepperWrap").hidden = true;
-  $("lineList").innerHTML = lines.map((l) => `<li><b>${esc(l.v.name)}</b> · ${l.count} × ${esc(l.v.net)}${l.lastNet && l.lastNet !== l.v.net ? ` (last ${esc(l.lastNet)})` : ""}</li>`).join("");
+  $("lineList").innerHTML = lines.map((l) => `<li><b>${esc(l.v.name)}</b><span>${l.lastNet && l.lastNet !== l.v.net && l.count > 1 ? `${l.count - 1} × ${esc(l.v.net)} + 1 × ${esc(l.lastNet)}` : `${l.count} × ${esc(l.v.net)}`}</span></li>`).join("");
   $("lineList").hidden = false;
 } else {
-  $("title").textContent = single.batch ? `${single.batch} · ${single.name}` : "No batch selected";
+  $("title").textContent = single.name || "No batch selected";
+  $("sub").textContent = single.batch;
 }
-if (!hasData) $("empty").hidden = false;
+if (!hasData) { $("empty").hidden = false; $("view").hidden = true; }
+
+// One label large; ‹ › flips through them (the same image the label printer gets).
+let at = 0;
+function showOne() {
+  const list = labelList();
+  if (!list.length) return;
+  at = Math.min(at, list.length - 1);
+  const l = list[at];
+  $("one").replaceChildren(drawLabel(l.v, l.i, l.total));
+  $("pos").textContent = `Label ${at + 1} of ${list.length}`;
+  $("prev").disabled = $("next").disabled = list.length < 2;
+}
+$("prev").addEventListener("click", () => { const n = labelList().length; at = (at - 1 + n) % n; showOne(); });
+$("next").addEventListener("click", () => { at = (at + 1) % labelList().length; showOne(); });
 
 function render() {
   if (!hasData) return ($("sheet").innerHTML = "");
   $("sheet").innerHTML = lines ? multiSheetHtml(lines) : sheetHtml(single, $("copies").value);
+  showOne();
 }
 
 $("copies").addEventListener("input", render);
@@ -60,6 +77,7 @@ const ua = navigator.userAgent;
 const inLarkApp = /Lark|Feishu/i.test(ua) && /Android|iPhone|iPad/i.test(ua);
 if (inLarkApp) {
   $("inapp").hidden = false;
+  $("printBtn").hidden = true;
   if (/Android/i.test(ua)) {
     const href = location.href;
     const intent = `intent://${href.replace(/^https?:\/\//, "")}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(href)};end`;
@@ -89,6 +107,12 @@ if (hasData && !inLarkApp) {
     btn: $("directBtn"), pickBtn: $("pickBtn"), bleBtn: $("bleBtn"), more: $("directMore"), note: $("directNote"),
     getCanvases: () => labelList().map((l) => drawLabel(l.v, l.i, l.total)),
   });
+  // Bluetooth printing available: that is the main button; the print dialog moves under "More ways".
+  if (!$("directBtn").hidden) {
+    $("printBtn").className = "ghost";
+    $("printBtn").textContent = "Print with the print dialog";
+    $("more").prepend($("printBtn"));
+  }
 }
 
 async function labelFiles() {

@@ -161,8 +161,24 @@ select.num{text-align:left}
   .bar .sum{font-size:13px;line-height:1.3}
 }
 /* labels */
-.previews{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
-.previews canvas{width:200px;height:120px;border:1px solid var(--line);border-radius:4px;background:#fff}
+/* print screen: one label large, flip with ‹ ›; one main button for this device */
+.lset{display:grid;gap:12px}
+.lhead{display:flex;gap:10px;align-items:flex-start}
+.lhead .t{flex:1;display:grid;gap:2px}
+.lhead .t b{font-size:17px}
+.lnav{display:flex;align-items:center;justify-content:center;gap:16px}
+.lpaper{background:#fff;border-radius:6px;box-shadow:0 0 0 1px var(--line),0 6px 18px rgba(15,23,32,.12);overflow:hidden;max-width:400px;justify-self:center;width:100%}
+.lpaper canvas{display:block;width:100%;height:auto}
+.lpos{text-align:center;font-variant-numeric:tabular-nums}
+.llist{margin:0;padding:0;list-style:none;display:grid;gap:6px}
+.llist li{display:flex;justify-content:space-between;gap:10px;padding:8px 10px;background:var(--soft);border-radius:8px;font-size:14px}
+.llist li b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.llist li span{flex:none;color:var(--muted);font-variant-numeric:tabular-nums}
+.lgo{display:grid}
+.lgo .primary{width:100%;height:54px}
+.lgo .primary[hidden]{display:none}
+.lmore summary{cursor:pointer;color:var(--muted);font-weight:600;padding:6px 0}
+.lmorebody{display:grid;gap:8px;padding-top:6px}
 .actions{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-top:10px}
 .list{display:grid;gap:6px}
 .lrow{display:flex;gap:10px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
@@ -310,18 +326,24 @@ dialog ul{padding-left:18px;margin:8px 0;max-height:50vh;overflow:auto}
   </section>
 
   <section id="v-labels" data-view="labels" hidden>
-    <div id="lblset" class="card" hidden>
-      <b id="lbltitle"></b>
-      <div class="actions">
+    <div id="lblset" class="card lset" hidden>
+      <div class="lhead"><div class="t"><b id="lbltitle"></b><span class="muted" id="lblsub"></span></div><button class="x" id="lblclose" aria-label="Close">×</button></div>
+      <div class="lpaper" id="lone"></div>
+      <div class="lnav"><button class="navbtn" id="lprev" aria-label="Previous label">‹</button><span class="lpos muted" id="lpos"></span><button class="navbtn" id="lnext" aria-label="Next label">›</button></div>
+      <ul class="llist" id="llist"></ul>
+      <div class="lgo" id="lgo">
         <button id="direct" class="primary" hidden>Print to label printer</button>
-        <button id="openext" class="primary">Print (opens Chrome)</button>
-        <button id="share" class="ghost">Send to printer app</button>
-        <button id="printnow" class="ghost">Print here</button>
+        <button id="openext" class="primary">Open in Chrome to print</button>
+        <button id="printnow" class="primary">Print</button>
       </div>
-      <div id="directMore" class="links" hidden><button id="pick" class="linkbtn">Choose another printer</button><button id="ble" class="linkbtn">Bluetooth LE printer</button></div>
-      <div id="directNote" class="note" hidden style="margin-top:10px"></div>
-      <div id="lblnote" class="note" hidden style="margin-top:10px"></div>
-      <div class="previews" id="previews"></div>
+      <div id="directNote" class="note" hidden></div>
+      <div id="lblnote" class="note" hidden></div>
+      <details class="lmore"><summary>More ways to print</summary>
+        <div class="lmorebody" id="lmore">
+          <button id="share" class="ghost">Send images to printer app</button>
+          <div id="directMore" class="links" hidden><button id="pick" class="linkbtn">Choose another printer</button><button id="ble" class="linkbtn">Bluetooth LE printer</button></div>
+        </div>
+      </details>
     </div>
     <h2>Recent production</h2>
     <div class="list" id="recentB"><p class="muted">Loading…</p></div>
